@@ -30,7 +30,20 @@ const double R2 = R * R;
 const double invR2 = 1.0 / R2;
 const double ptmin = 5.0;
 const double dcut = ptmin * ptmin;
-int const NUM_PARTICLES = 354; 
+int const NUM_PARTICLES = 354;
+
+__device__ static double atomicMin(double *address, double val)
+{
+    unsigned long long int* address_as_i = (unsigned long long int*)address;
+    unsigned long long int old = *address_as_i, assumed;
+    do
+    {
+        assumed = old;
+        old = ::atomicCAS(address_as_i, assumed,
+                          __double_as_longlong(fmin(val, __longlong_as_double(assumed))));
+    } while (assumed != old);
+    return __longlong_as_double(old);
+}
 
 __device__ void _set_jet(PseudoJet &jet)
 {
@@ -95,176 +108,106 @@ __device__ double plain_distance(PseudoJet &jet1, PseudoJet &jet2)
     return (dphi * dphi + drap * drap);
 }
 
-__global__ void dumb_n3(PseudoJet *jets, int num_particles, double *mini)
+__global__ void dumb_n3(PseudoJet *jets, int num_particles)
 {
     __shared__ PseudoJet s_jets[NUM_PARTICLES];
-    __shared__ double s_distances[NUM_PARTICLES];
-    __shared__ int ii_indices[NUM_PARTICLES];
-    __shared__ int jj_indices[NUM_PARTICLES];
+    __shared__ double minimum;
+    __shared__ int s_ii, s_jj;
 
     int tid = blockDim.x * blockIdx.x + threadIdx.x;
-    if(tid < num_particles)
+    if (tid < num_particles)
     {
         s_jets[tid] = jets[tid];
         _set_jet(s_jets[tid]);
+        if (tid == 0)
+        {
+            minimum = numeric_limits<double>::max();
+            s_ii = -1;
+            s_jj = -1;
+        }
         __syncthreads();
     }
 
     // Loop on all particles
+    double ymin;
+    int ii;
+    int jj;
     while (num_particles > 0 && tid < num_particles)
     {
-        s_distances[tid] = s_jets[tid].diB;
-        ii_indices[tid] = tid;
-        jj_indices[tid] = -1;
-        __syncthreads();
-
-        int ii = -1;
-        int jj = -1;
-
+        ii = -1;
+        jj = -1;
         // Find minimum yiB
-        for (int s = 1; s < blockDim.x; s *= 2)
+        ymin = s_jets[tid].diB;
+        double old = atomicMin(&minimum, ymin);
+        // printf("old =  %f\n", old);
+        // printf("ymin =  %f\n", ymin);
+        // printf("minimum = %f\n", minimum);
+        __syncthreads();
+        if (ymin == minimum)
         {
-            if (threadIdx.x % (2 * s) == 0)
-                if (threadIdx.x + s < num_particles)
-                    if (s_distances[threadIdx.x] >
-                        s_distances[threadIdx.x + s])
-                    {
-                        s_distances[threadIdx.x] =
-                            s_distances[threadIdx.x + s];
-
-                        ii_indices[threadIdx.x] =
-                            ii_indices[threadIdx.x + s];
-                    }
-            __syncthreads();
+            s_ii = tid;
         }
+        ymin = minimum;
+        __syncthreads();
 
-        // Thread 0 gets the results form different blocks
-        double ymin;
-        if (tid == 0)
+        double distance = 0;
+        for (int j = tid + 1; j < num_particles; j++)
         {
-            ymin = s_distances[0];
-            ii = ii_indices[0];
-            for (int i = 1; i < gridDim.x; i++)
-                if (s_distances[i * blockDim.x + 1] < ymin)
-                {
-                    ymin = s_distances[i * blockDim.x + 1];
-                    ii = ii_indices[i * blockDim.x + 1];
-                }
-
-            *mini = ymin;
-            s_distances[0] = ymin;
-            ii_indices[0] = ii;
-            // printf("mini = %.17e\n", ymin);
-            // printf("ii = %d\n", ii);
-            // printf("jj = %d\n", jj);
-        }
-        __syncthreads();
-
-        // Get the miniumum yiB and its index to all threads
-        ymin = s_distances[0];
-        ii = ii_indices[0];
-        __syncthreads();
-
-        // Reset the indices
-        ii_indices[tid] = tid;
-        __syncthreads();
-
-        // Find the minimun yij between the current jet that is processed 
-        // by the current thread (one jet with all jets that follows)
-        if (tid < num_particles)
-        {
-            double distance = 0;
-            for (int j = tid + 1; j < num_particles; j++)
+            distance = min(s_jets[tid].diB, s_jets[j].diB) * plain_distance(s_jets[tid], s_jets[j]) * invR2;
+            // if(tid == 0)
+            //     printf("%.17e\n", distance);
+            if (distance < ymin)
             {
-                distance = min(s_jets[tid].diB, s_jets[j].diB)
-                * plain_distance(s_jets[tid], s_jets[j])
-                * invR2;
-                // if(tid == 0)
-                //     printf("%.17e\n", distance);
-                if (distance < ymin)
-                {
-                    ymin = distance;
-                    ii = tid;
-                    jj = j;
-                }
+                ymin = distance;
+                ii = tid;
+                jj = j;
             }
         }
 
-        // Communicate the minimum distance between the jet and other jets
-        // if the distance is less than the yiB, and communicate the indices
-        // ii jj
-        s_distances[tid] = ymin;
-        ii_indices[tid] = ii;
-        jj_indices[tid] = jj;
-
-        __syncthreads();
-
-        // if(jj > -1)
-        // Find the smallest distance between all the threads
-        for (int s = 1; s < blockDim.x; s *= 2)
+        // Find minimum yiB
+        if (jj > -1)
         {
-            if (threadIdx.x % (2 * s) == 0)
-                if (threadIdx.x + s < num_particles)
-                    if (s_distances[threadIdx.x] >
-                        s_distances[threadIdx.x + s])
-                    {
-                        s_distances[threadIdx.x] =
-                            s_distances[threadIdx.x + s];
-
-                        ii_indices[threadIdx.x] = ii_indices[threadIdx.x + s];
-                        jj_indices[threadIdx.x] = jj_indices[threadIdx.x + s];
-                    }
+            atomicMin(&minimum, ymin);
+            __syncthreads();
+            if (ymin == minimum)
+            {
+                s_ii = ii;
+                s_jj = jj;
+                
+                printf("ymin =  %f\n", ymin);
+                printf("minimum = %f\n", minimum);
+            }
             __syncthreads();
         }
-        __syncthreads();
 
         // Get the minimum from all blocks
         if (tid == 0)
         {
-            ymin = s_distances[0];
-            ii = ii_indices[0];
-            jj = jj_indices[0];
-            for (int i = 1; i < gridDim.x; i++)
-                if (s_distances[i * blockDim.x + 1] < ymin)
-                {
-                    ymin = s_distances[i * blockDim.x + 1];
-                    ii = ii_indices[i * blockDim.x + 1];
-                    jj = jj_indices[i * blockDim.x + 1];
-                }
-
-            *mini = ymin;
-            s_distances[0] = ymin;
-            ii_indices[0] = ii;
-            jj_indices[0] = jj;
-            // printf("mini = %.17e\n", ymin);
-            // printf("ii = %d\n", ii);
-            // printf("jj = %d\n", jj);
-        // }
-        // __syncthreads();
-
-        // if (tid == 0)
-        // {
-            // Perform recombination using E_Scheme (Simple Sum)
-            if (jj > 0)
+            printf("ii = %d, jj = %d\n", s_ii, s_jj);
+            // printf("minimum = %f\n", minimum);
+            minimum = numeric_limits<double>::max();
+            if (s_jj > -1)
             {
                 // Do yij recombination
-                s_jets[ii].px += s_jets[jj].px;
-                s_jets[ii].py += s_jets[jj].py;
-                s_jets[ii].pz += s_jets[jj].pz;
-                s_jets[ii].E += s_jets[jj].E;
-                _set_jet(s_jets[ii]);
+                s_jets[s_ii].px += s_jets[s_jj].px;
+                s_jets[s_ii].py += s_jets[s_jj].py;
+                s_jets[s_ii].pz += s_jets[s_jj].pz;
+                s_jets[s_ii].E += s_jets[s_jj].E;
+                _set_jet(s_jets[s_ii]);
 
-                s_jets[jj] = s_jets[num_particles - 1];
+                s_jets[s_jj] = s_jets[num_particles - 1];
             }
             else
             {
                 // Do yiB recombination
-                if (s_jets[ii].diB >= dcut)
+                if (s_jets[s_ii].diB >= dcut)
                     printf("%15.8f %15.8f %15.8f\n",
-                           s_jets[ii].rap, s_jets[ii].phi, sqrt(s_jets[ii].diB));
+                           s_jets[s_ii].rap, s_jets[s_ii].phi, sqrt(s_jets[s_ii].diB));
 
-                s_jets[ii] = s_jets[num_particles - 1];
+                s_jets[s_ii] = s_jets[num_particles - 1];
             }
+            s_ii = -1;
+            s_jj = -1;
         }
 
         num_particles--;
@@ -300,7 +243,7 @@ int main()
     // Check for any CUDA errors
     checkCUDAError("cudaMemcpy calls1");
 
-    int num_threads = 4000;//354;
+    int num_threads = 1024; //354;
     int num_blocks = (NUM_PARTICLES - 1) / num_threads + 1;
     //std::cout << "blocks = " << num_blocks;
 
@@ -314,7 +257,7 @@ int main()
               //NUM_PARTICLES * sizeof(PseudoJet) // Jets
               //    + NUM_PARTICLES * sizeof(double) // Distances
               //    + NUM_PARTICLES * 2 * sizeof(int)
-              >>>(d_jets, NUM_PARTICLES, d_mini);
+              >>>(d_jets, NUM_PARTICLES);
     cudaEventRecord(stop);
 
     // Check for any CUDA errors
