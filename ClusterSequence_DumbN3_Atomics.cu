@@ -34,7 +34,7 @@ int const NUM_PARTICLES = 354;
 
 __device__ static double atomicMin(double *address, double val)
 {
-    unsigned long long int* address_as_i = (unsigned long long int*)address;
+    unsigned long long int *address_as_i = (unsigned long long int *)address;
     unsigned long long int old = *address_as_i, assumed;
     do
     {
@@ -121,7 +121,7 @@ __global__ void dumb_n3(PseudoJet *jets, int num_particles)
         _set_jet(s_jets[tid]);
         if (tid == 0)
         {
-            minimum = numeric_limits<double>::max();
+            minimum = 10000000000.0;
             s_ii = -1;
             s_jj = -1;
         }
@@ -146,6 +146,7 @@ __global__ void dumb_n3(PseudoJet *jets, int num_particles)
         if (ymin == minimum)
         {
             s_ii = tid;
+            printf("ii = %d\n", tid);
         }
         ymin = minimum;
         __syncthreads();
@@ -173,19 +174,18 @@ __global__ void dumb_n3(PseudoJet *jets, int num_particles)
             {
                 s_ii = ii;
                 s_jj = jj;
-                
-                printf("ymin =  %f\n", ymin);
-                printf("minimum = %f\n", minimum);
+                //
+                // printf("ymin =  %f\n", ymin);
+                // printf("minimum = %f\n", minimum);
             }
-            __syncthreads();
         }
-
+        __syncthreads();
         // Get the minimum from all blocks
         if (tid == 0)
         {
-            printf("ii = %d, jj = %d\n", s_ii, s_jj);
+            // printf("ii = %d, jj = %d\n", s_ii, s_jj);__syncthreads();
             // printf("minimum = %f\n", minimum);
-            minimum = numeric_limits<double>::max();
+            minimum = 100000000000.0;
             if (s_jj > -1)
             {
                 // Do yij recombination
