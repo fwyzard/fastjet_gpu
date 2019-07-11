@@ -1,0 +1,4 @@
+myrsync ()
+{
+	rsync -e ssh $1 abmohame@vinavx2:/data/user/abmohame/cuda_exercises/fastjet_gpu/$1
+}
