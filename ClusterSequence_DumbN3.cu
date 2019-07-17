@@ -2,6 +2,7 @@
 #include <limits>
 #include <cmath>
 #include <assert.h>
+#include <stdio.h>
 
 // Here you can set the device ID that was assigned to you
 #define MYDEVICE 0
@@ -30,7 +31,7 @@ const double R2 = R * R;
 const double invR2 = 1.0 / R2;
 const double ptmin = 5.0;
 const double dcut = ptmin * ptmin;
-int const NUM_PARTICLES = 354; 
+int const NUM_PARTICLES = 354;
 
 __device__ void _set_jet(PseudoJet &jet)
 {
@@ -95,7 +96,7 @@ __device__ double plain_distance(PseudoJet &jet1, PseudoJet &jet2)
     return (dphi * dphi + drap * drap);
 }
 
-__global__ void dumb_n3(PseudoJet *jets, int num_particles, double *mini)
+__global__ void dumb_n3(PseudoJet *jets, int num_particles)
 {
     __shared__ PseudoJet s_jets[NUM_PARTICLES];
     __shared__ double s_distances[NUM_PARTICLES];
@@ -103,7 +104,7 @@ __global__ void dumb_n3(PseudoJet *jets, int num_particles, double *mini)
     __shared__ int jj_indices[NUM_PARTICLES];
 
     int tid = blockDim.x * blockIdx.x + threadIdx.x;
-    if(tid < num_particles)
+    if (tid < num_particles)
     {
         s_jets[tid] = jets[tid];
         _set_jet(s_jets[tid]);
@@ -151,7 +152,7 @@ __global__ void dumb_n3(PseudoJet *jets, int num_particles, double *mini)
                     ii = ii_indices[i * blockDim.x + 1];
                 }
 
-            *mini = ymin;
+            // *mini = ymin;
             s_distances[0] = ymin;
             ii_indices[0] = ii;
             // printf("mini = %.17e\n", ymin);
@@ -169,16 +170,14 @@ __global__ void dumb_n3(PseudoJet *jets, int num_particles, double *mini)
         ii_indices[tid] = tid;
         __syncthreads();
 
-        // Find the minimun yij between the current jet that is processed 
+        // Find the minimun yij between the current jet that is processed
         // by the current thread (one jet with all jets that follows)
         if (tid < num_particles)
         {
             double distance = 0;
             for (int j = tid + 1; j < num_particles; j++)
             {
-                distance = min(s_jets[tid].diB, s_jets[j].diB)
-                * plain_distance(s_jets[tid], s_jets[j])
-                * invR2;
+                distance = min(s_jets[tid].diB, s_jets[j].diB) * plain_distance(s_jets[tid], s_jets[j]) * invR2;
                 // if(tid == 0)
                 //     printf("%.17e\n", distance);
                 if (distance < ymin)
@@ -232,18 +231,18 @@ __global__ void dumb_n3(PseudoJet *jets, int num_particles, double *mini)
                     jj = jj_indices[i * blockDim.x + 1];
                 }
 
-            *mini = ymin;
+            // *mini = ymin;
             s_distances[0] = ymin;
             ii_indices[0] = ii;
             jj_indices[0] = jj;
             // printf("mini = %.17e\n", ymin);
             // printf("ii = %d\n", ii);
             // printf("jj = %d\n", jj);
-        // }
-        // __syncthreads();
+            // }
+            // __syncthreads();
 
-        // if (tid == 0)
-        // {
+            // if (tid == 0)
+            // {
             // Perform recombination using E_Scheme (Simple Sum)
             if (jj > 0)
             {
@@ -259,10 +258,11 @@ __global__ void dumb_n3(PseudoJet *jets, int num_particles, double *mini)
             else
             {
                 // Do yiB recombination
-                if (s_jets[ii].diB >= dcut)
-                    printf("%15.8f %15.8f %15.8f\n",
-                           s_jets[ii].rap, s_jets[ii].phi, sqrt(s_jets[ii].diB));
+                // if (s_jets[ii].diB >= dcut)
+                // printf("%15.8f %15.8f %15.8f\n",
+                //    s_jets[ii].rap, s_jets[ii].phi, sqrt(s_jets[ii].diB));
 
+                jets[ii] = s_jets[ii];
                 s_jets[ii] = s_jets[num_particles - 1];
             }
         }
@@ -279,9 +279,9 @@ int main()
     PseudoJet *h_jets = 0;
     h_jets = (PseudoJet *)malloc(NUM_PARTICLES * sizeof(PseudoJet));
 
-    double *h_mini = 0;
-    h_mini = (double *)malloc(sizeof(double));
-    *h_mini = numeric_limits<double>::max();
+    // double *h_mini = 0;
+    // h_mini = (double *)malloc(sizeof(double));
+    // *h_mini = numeric_limits<double>::max();
 
     int i;
     for (i = 0; i < NUM_PARTICLES; i++)
@@ -293,14 +293,14 @@ int main()
     cudaMalloc((void **)&d_jets, NUM_PARTICLES * sizeof(PseudoJet));
     cudaMemcpy(d_jets, h_jets, NUM_PARTICLES * sizeof(PseudoJet), cudaMemcpyHostToDevice);
 
-    double *d_mini = 0;
-    cudaMalloc((void **)&d_mini, sizeof(double));
-    cudaMemcpy(d_mini, h_mini, sizeof(double), cudaMemcpyHostToDevice);
+    // double *d_mini = 0;
+    // cudaMalloc((void **)&d_mini, sizeof(double));
+    // cudaMemcpy(d_mini, h_mini, sizeof(double), cudaMemcpyHostToDevice);
 
     // Check for any CUDA errors
     checkCUDAError("cudaMemcpy calls1");
 
-    int num_threads = 4000;//354;
+    int num_threads = 354;
     int num_blocks = (NUM_PARTICLES - 1) / num_threads + 1;
     //std::cout << "blocks = " << num_blocks;
 
@@ -314,7 +314,7 @@ int main()
               //NUM_PARTICLES * sizeof(PseudoJet) // Jets
               //    + NUM_PARTICLES * sizeof(double) // Distances
               //    + NUM_PARTICLES * 2 * sizeof(int)
-              >>>(d_jets, NUM_PARTICLES, d_mini);
+              >>>(d_jets, NUM_PARTICLES);
     cudaEventRecord(stop);
 
     // Check for any CUDA errors
@@ -325,11 +325,15 @@ int main()
                cudaMemcpyDeviceToHost);
     // Check for any CUDA errors
     checkCUDAError("cudaMemcpy2 calls");
+    for (int i = 0; i < NUM_PARTICLES; i++)
+        if (h_jets[i].diB > dcut)
+            printf("%15.8f %15.8f %15.8f\n",
+                   h_jets[i].rap, h_jets[i].phi, sqrt(h_jets[i].diB));
 
-    cudaMemcpy(h_mini, d_mini, sizeof(double), cudaMemcpyDeviceToHost);
+    // cudaMemcpy(h_mini, d_mini, sizeof(double), cudaMemcpyDeviceToHost);
 
     // Check for any CUDA errors
-    checkCUDAError("cudaMemcpy3 calls");
+    // checkCUDAError("cudaMemcpy3 calls");
     cudaEventSynchronize(stop);
 
     //    cout << "d_mini = " << *h_mini << std::endl;
@@ -339,11 +343,11 @@ int main()
 
     // free device memory
     cudaFree(d_jets);
-    cudaFree(d_mini);
+    // cudaFree(d_mini);
 
     // free host memory
     free(h_jets);
-    free(h_mini);
+    // free(h_mini);
 
     return 0;
 }

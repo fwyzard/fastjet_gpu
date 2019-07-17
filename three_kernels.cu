@@ -2,6 +2,7 @@
 #include <limits>
 #include <cmath>
 #include <assert.h>
+#include <stdio.h>
 
 // Here you can set the device ID that was assigned to you
 #define MYDEVICE 0
@@ -30,7 +31,7 @@ const double R2 = R * R;
 const double invR2 = 1.0 / R2;
 const double ptmin = 5.0;
 const double dcut = ptmin * ptmin;
-int const NUM_PARTICLES = 354; 
+int const NUM_PARTICLES = 354;
 
 __device__ void _set_jet(PseudoJet &jet)
 {
@@ -95,186 +96,122 @@ __device__ double plain_distance(PseudoJet &jet1, PseudoJet &jet2)
     return (dphi * dphi + drap * drap);
 }
 
-__global__ void reduction_minimum(PseudoJet *jets, int num_particles, double *mini)
+__device__ double yij_distance(PseudoJet &jet1, PseudoJet &jet2)
 {
-    __shared__ PseudoJet s_jets[NUM_PARTICLES];
-    __shared__ double s_distances[NUM_PARTICLES];
-    __shared__ int ii_indices[NUM_PARTICLES];
-    __shared__ int jj_indices[NUM_PARTICLES];
+    return min(jet1.diB, jet2.diB) *
+           plain_distance(jet1, jet2) *
+           invR2;
+}
 
+double plain_distance_h(PseudoJet &jet1, PseudoJet &jet2)
+{
+    double dphi = abs(jet1.phi - jet2.phi);
+    if (dphi > pi)
+    {
+        dphi = twopi - dphi;
+    }
+    double drap = jet1.rap - jet2.rap;
+    return (dphi * dphi + drap * drap);
+}
+
+double yij_distance_h(PseudoJet &jet1, PseudoJet &jet2)
+{
+    return min(jet1.diB, jet2.diB) *
+           plain_distance_h(jet1, jet2) *
+           invR2;
+}
+
+__global__ void set_jets(PseudoJet *jets)
+{
     int tid = blockDim.x * blockIdx.x + threadIdx.x;
-    if(tid < num_particles)
+    _set_jet(jets[tid]);
+    // __syncthreads();
+    // if(tid == 0)
+    //     for(int i = 0; i < NUM_PARTICLES; i++)
+    //         printf("%10.8f%10.8f%10.8f%10.8f%10.8f%10.8f%10.8f\n",
+    //             jets[i].px,
+    //             jets[i].py,
+    //             jets[i].pz,
+    //             jets[i].E,
+    //             jets[i].diB,
+    //             jets[i].phi,
+    //             jets[i].rap
+    //         );
+}
+
+__global__ void set_distances(PseudoJet *jets, double *distances,
+                              int const num_particles)
+{
+    int tid = blockDim.x * blockIdx.x + threadIdx.x;
+    int i = tid / num_particles;
+    int j = (tid % num_particles) - i;
+
+    if (i == j)
     {
-        s_jets[tid] = jets[tid];
-        _set_jet(s_jets[tid]);
+        distances[tid] = jets[i].diB;
+    }
+    else
+    {
+        distances[tid] = yij_distance(jets[i], jets[j]);
+    }
+
+    if (tid == 0)
+    //     for (int tid = 0; tid < gridDim.x * blockDim.x; tid++)
+    //     {
+    //         int i = tid / NUM_PARTICLES;
+    //         int j = (tid % NUM_PARTICLES) - 1;
+
+    //         if (i == j)
+    //         {
+    //             // cout << endl
+    //             //      << h_distances[tid];
+    //             if (distances[tid] == jets[i].diB)
+    //                 printf("\n0");
+    //             else
+    //                 printf("\n1");
+    //         }
+    //         else
+    //         {
+    //             // cout << endl
+    //             //      << h_distances[tid];
+    //             if (distances[tid] == yij_distance(jets[i], jets[j]))
+    //                 printf(" 0");
+    //             else
+    //                 printf(" 1");
+    //         }
+    //     }
+    for (int i = 0; i < gridDim.x * blockDim.x; i++)
+        printf("%d %10.5f\n", i, distances[i]);
+}
+
+__global__ void reduction_min(PseudoJet *jets, double *distances,
+                              int const num_particles)
+{
+    for (int s = 1; s < blockDim.x; s *= 2)
+    {
+        if (threadIdx.x % (2 * s) == 0)
+            if (threadIdx.x + s < num_particles)
+                if (distances[threadIdx.x] >
+                    distances[threadIdx.x + s])
+                {
+                    distances[threadIdx.x] =
+                        distances[threadIdx.x + s];
+                }
         __syncthreads();
     }
 
-    // Loop on all particles
-    while (num_particles > 0 && tid < num_particles)
-    {
-        s_distances[tid] = s_jets[tid].diB;
-        ii_indices[tid] = tid;
-        jj_indices[tid] = -1;
-        __syncthreads();
-
-        int ii = -1;
-        int jj = -1;
-
-        // Find minimum yiB
-        for (int s = 1; s < blockDim.x; s *= 2)
-        {
-            if (threadIdx.x % (2 * s) == 0)
-                if (threadIdx.x + s < num_particles)
-                    if (s_distances[threadIdx.x] >
-                        s_distances[threadIdx.x + s])
-                    {
-                        s_distances[threadIdx.x] =
-                            s_distances[threadIdx.x + s];
-
-                        ii_indices[threadIdx.x] =
-                            ii_indices[threadIdx.x + s];
-                    }
-            __syncthreads();
-        }
-
-        // Thread 0 gets the results form different blocks
-        double ymin;
-        if (tid == 0)
-        {
-            ymin = s_distances[0];
-            ii = ii_indices[0];
-            for (int i = 1; i < gridDim.x; i++)
-                if (s_distances[i * blockDim.x + 1] < ymin)
-                {
-                    ymin = s_distances[i * blockDim.x + 1];
-                    ii = ii_indices[i * blockDim.x + 1];
-                }
-
-            *mini = ymin;
-            s_distances[0] = ymin;
-            ii_indices[0] = ii;
-            // printf("mini = %.17e\n", ymin);
-            // printf("ii = %d\n", ii);
-            // printf("jj = %d\n", jj);
-        }
-        __syncthreads();
-
-        // Get the miniumum yiB and its index to all threads
-        ymin = s_distances[0];
-        ii = ii_indices[0];
-        __syncthreads();
-
-        // Reset the indices
-        ii_indices[tid] = tid;
-        __syncthreads();
-
-        // Find the minimun yij between the current jet that is processed 
-        // by the current thread (one jet with all jets that follows)
-        if (tid < num_particles)
-        {
-            double distance = 0;
-            for (int j = tid + 1; j < num_particles; j++)
-            {
-                distance = min(s_jets[tid].diB, s_jets[j].diB)
-                * plain_distance(s_jets[tid], s_jets[j])
-                * invR2;
-                // if(tid == 0)
-                //     printf("%.17e\n", distance);
-                if (distance < ymin)
-                {
-                    ymin = distance;
-                    ii = tid;
-                    jj = j;
-                }
-            }
-        }
-
-        // Communicate the minimum distance between the jet and other jets
-        // if the distance is less than the yiB, and communicate the indices
-        // ii jj
-        s_distances[tid] = ymin;
-        ii_indices[tid] = ii;
-        jj_indices[tid] = jj;
-
-        __syncthreads();
-
-        // if(jj > -1)
-        // Find the smallest distance between all the threads
-        for (int s = 1; s < blockDim.x; s *= 2)
-        {
-            if (threadIdx.x % (2 * s) == 0)
-                if (threadIdx.x + s < num_particles)
-                    if (s_distances[threadIdx.x] >
-                        s_distances[threadIdx.x + s])
-                    {
-                        s_distances[threadIdx.x] =
-                            s_distances[threadIdx.x + s];
-
-                        ii_indices[threadIdx.x] = ii_indices[threadIdx.x + s];
-                        jj_indices[threadIdx.x] = jj_indices[threadIdx.x + s];
-                    }
-            __syncthreads();
-        }
-        __syncthreads();
-
-        // Get the minimum from all blocks
-        if (tid == 0)
-        {
-            ymin = s_distances[0];
-            ii = ii_indices[0];
-            jj = jj_indices[0];
-            for (int i = 1; i < gridDim.x; i++)
-                if (s_distances[i * blockDim.x + 1] < ymin)
-                {
-                    ymin = s_distances[i * blockDim.x + 1];
-                    ii = ii_indices[i * blockDim.x + 1];
-                    jj = jj_indices[i * blockDim.x + 1];
-                }
-
-            *mini = ymin;
-            s_distances[0] = ymin;
-            ii_indices[0] = ii;
-            jj_indices[0] = jj;
-            // printf("mini = %.17e\n", ymin);
-            // printf("ii = %d\n", ii);
-            // printf("jj = %d\n", jj);
-        // }
-        // __syncthreads();
-
-        // if (tid == 0)
-        // {
-            // Perform recombination using E_Scheme (Simple Sum)
-            if (jj > 0)
-            {
-                // Do yij recombination
-                s_jets[ii].px += s_jets[jj].px;
-                s_jets[ii].py += s_jets[jj].py;
-                s_jets[ii].pz += s_jets[jj].pz;
-                s_jets[ii].E += s_jets[jj].E;
-                _set_jet(s_jets[ii]);
-
-                s_jets[jj] = s_jets[num_particles - 1];
-            }
-            else
-            {
-                // Do yiB recombination
-                if (s_jets[ii].diB >= dcut)
-                    printf("%15.8f %15.8f %15.8f\n",
-                           s_jets[ii].rap, s_jets[ii].phi, sqrt(s_jets[ii].diB));
-
-                s_jets[ii] = s_jets[num_particles - 1];
-            }
-        }
-
-        num_particles--;
-        __syncthreads();
-    }
+    if (threadIdx.x == 0)
+        printf("%15.8e\n", distances[blockDim.x * blockIdx.x]);
 }
 
 int main()
 {
-    cudaSetDevice(MYDEVICE);
+    int d_id;
+    cudaDeviceProp d_prop;
+
+    cudaChooseDevice(&d_id, &d_prop);
+    cout << "device id is " << d_id << endl;
+    cudaSetDevice(d_id);
 
     PseudoJet *h_jets = 0;
     h_jets = (PseudoJet *)malloc(NUM_PARTICLES * sizeof(PseudoJet));
@@ -293,6 +230,10 @@ int main()
     cudaMalloc((void **)&d_jets, NUM_PARTICLES * sizeof(PseudoJet));
     cudaMemcpy(d_jets, h_jets, NUM_PARTICLES * sizeof(PseudoJet), cudaMemcpyHostToDevice);
 
+    double *d_distances = 0;
+    cudaMalloc((void **)&d_distances,
+               (NUM_PARTICLES * (NUM_PARTICLES + 1) / 2) * sizeof(double));
+
     double *d_mini = 0;
     cudaMalloc((void **)&d_mini, sizeof(double));
     cudaMemcpy(d_mini, h_mini, sizeof(double), cudaMemcpyHostToDevice);
@@ -300,8 +241,8 @@ int main()
     // Check for any CUDA errors
     checkCUDAError("cudaMemcpy calls1");
 
-    int num_threads = 4000;//354;
-    int num_blocks = (NUM_PARTICLES - 1) / num_threads + 1;
+    int num_threads = 354;
+    int num_blocks = (NUM_PARTICLES + num_threads) / num_threads + 1;
     //std::cout << "blocks = " << num_blocks;
 
     cudaEvent_t start, stop;
@@ -309,20 +250,54 @@ int main()
     cudaEventCreate(&stop);
 
     cudaEventRecord(start);
-    dumb_n3<<<num_blocks,
-              num_threads //,
-              //NUM_PARTICLES * sizeof(PseudoJet) // Jets
-              //    + NUM_PARTICLES * sizeof(double) // Distances
-              //    + NUM_PARTICLES * 2 * sizeof(int)
-              >>>(d_jets, NUM_PARTICLES, d_mini);
+    set_jets<<<num_blocks, num_threads>>>(d_jets);
+
+    num_threads = (NUM_PARTICLES * (NUM_PARTICLES + 1) / 2);
+    num_blocks = (num_threads / 1024) + 1;
+    cout << num_threads << " " << num_blocks << endl;
+    set_distances<<<num_blocks, 1024>>>(d_jets, d_distances,
+                                        NUM_PARTICLES);
+    reduction_min<<<num_blocks, 1024>>>(d_jets, d_distances,
+                                        NUM_PARTICLES);
     cudaEventRecord(stop);
 
     // Check for any CUDA errors
     checkCUDAError("kernal launch");
-
     cudaMemcpy(h_jets, d_jets,
                NUM_PARTICLES * sizeof(PseudoJet),
                cudaMemcpyDeviceToHost);
+
+    double *h_distances = 0;
+    h_distances = (double *)malloc(num_threads * sizeof(double));
+    cudaMemcpy(h_distances, d_distances, num_threads * sizeof(double),
+               cudaMemcpyDeviceToHost);
+
+    // for (int tid = 0; tid < num_threads; tid++)
+    // {
+    //     int i = tid / NUM_PARTICLES;
+    //     int j = (tid % NUM_PARTICLES) - 1;
+
+    //     cout << h_distances[tid] << endl;
+    //     // if (i == j)
+    //     // {
+    //     //     cout << endl
+    //     //          << h_distances[tid];
+    //     //     // if (h_distances[tid] == h_jets[i].diB)
+    //     //     //     cout << "\n0";
+    //     //     // else
+    //     //     //     cout << "\n1";
+    //     // }
+    //     // else
+    //     // {
+    //     //     cout << endl
+    //     //          << h_distances[tid];
+    //     //     // if (h_distances[tid] == yij_distance_h(h_jets[i], h_jets[j]))
+    //     //     //     cout << " 0";
+    //     //     // else
+    //     //     //     cout << " 1";
+    //     // }
+    // }
+
     // Check for any CUDA errors
     checkCUDAError("cudaMemcpy2 calls");
 
@@ -330,9 +305,9 @@ int main()
 
     // Check for any CUDA errors
     checkCUDAError("cudaMemcpy3 calls");
-    cudaEventSynchronize(stop);
 
     //    cout << "d_mini = " << *h_mini << std::endl;
+    cudaEventSynchronize(stop);
     float milliseconds = 0;
     cudaEventElapsedTime(&milliseconds, start, stop);
     printf("time = %10.8f\n", milliseconds);
@@ -340,10 +315,12 @@ int main()
     // free device memory
     cudaFree(d_jets);
     cudaFree(d_mini);
+    cudaFree(d_distances);
 
     // free host memory
     free(h_jets);
     free(h_mini);
+    free(h_distances);
 
     return 0;
 }
