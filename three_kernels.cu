@@ -29,12 +29,13 @@ const double MaxRap = 1e5;
 const double R = 0.6;
 const double R2 = R * R;
 const double invR2 = 1.0 / R2;
-const double ptmin = 5.0;
-const double dcut = ptmin * ptmin;
+// const double ptmin = 5.0;
+// const double dcut = ptmin * ptmin;
 int const NUM_PARTICLES = 354;
 
 __device__ void _set_jet(PseudoJet &jet)
 {
+    // printf("%15.8e %15.8e", jet.px, jet.py);
     jet.diB = jet.px * jet.px + jet.py * jet.py;
 
     if (jet.diB == 0.0)
@@ -140,11 +141,20 @@ __global__ void set_jets(PseudoJet *jets)
 }
 
 __global__ void set_distances(PseudoJet *jets, double *distances,
-                              int const num_particles)
+                              int *indices, int const num_particles)
 {
     int tid = blockDim.x * blockIdx.x + threadIdx.x;
-    int i = tid / num_particles;
-    int j = (tid % num_particles) - i;
+    int N = num_particles * (num_particles + 1) / 2;
+
+    if (tid >= N)
+        return;
+
+    indices[tid] = tid;
+
+    int ii = N - 1 - tid;
+    int k = floor((sqrt(8.0 * ii + 1) - 1) / 2);
+    int i = num_particles - 1 - k;
+    int j = tid - N + ((k + 1) * (k + 2) / 2) + i;
 
     if (i == j)
     {
@@ -154,8 +164,9 @@ __global__ void set_distances(PseudoJet *jets, double *distances,
     {
         distances[tid] = yij_distance(jets[i], jets[j]);
     }
+    // __syncthreads();
 
-    if (tid == 0)
+    // if (tid == 0)
     //     for (int tid = 0; tid < gridDim.x * blockDim.x; tid++)
     //     {
     //         int i = tid / NUM_PARTICLES;
@@ -180,28 +191,45 @@ __global__ void set_distances(PseudoJet *jets, double *distances,
     //                 printf(" 1");
     //         }
     //     }
-    for (int i = 0; i < gridDim.x * blockDim.x; i++)
-        printf("%d %10.5f\n", i, distances[i]);
+    // for (int i = 0; i < gridDim.x * blockDim.x; i++)
+    // printf("%d %10.5f\n", tid, distances[tid]);
 }
 
-__global__ void reduction_min(PseudoJet *jets, double *distances,
+__global__ void reduction_min(double *distances, double *out, int *indices,
                               int const num_particles)
 {
-    for (int s = 1; s < blockDim.x; s *= 2)
+    // int N = num_particles * (num_particles + 1) / 2;
+    extern __shared__ double sdata[];
+    extern __shared__ int sindices[];
+
+    unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int i = threadIdx.x;
+
+    if (tid >= num_particles)
+        return;
+
+    sdata[i] = distances[tid];
+    // sindices[tid] = tid;
+    __syncthreads();
+
+    for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1)
     {
-        if (threadIdx.x % (2 * s) == 0)
-            if (threadIdx.x + s < num_particles)
-                if (distances[threadIdx.x] >
-                    distances[threadIdx.x + s])
-                {
-                    distances[threadIdx.x] =
-                        distances[threadIdx.x + s];
-                }
+        if (i < s && (tid + s) < num_particles)
+        {
+            if (sdata[i] > sdata[i + s])
+            {
+                sdata[i] = sdata[i + s];
+                sindices[i] = tid + s;
+            }
+        }
         __syncthreads();
     }
 
-    if (threadIdx.x == 0)
-        printf("%15.8e\n", distances[blockDim.x * blockIdx.x]);
+    if (i == 0)
+    {
+        out[blockIdx.x] = sdata[0];
+        indices[blockIdx.x] = sindices[0];
+    }
 }
 
 int main()
@@ -234,6 +262,10 @@ int main()
     cudaMalloc((void **)&d_distances,
                (NUM_PARTICLES * (NUM_PARTICLES + 1) / 2) * sizeof(double));
 
+    int *d_indices = 0;
+    cudaMalloc((void **)&d_indices,
+               (NUM_PARTICLES * (NUM_PARTICLES + 1) / 2) * sizeof(int));
+
     double *d_mini = 0;
     cudaMalloc((void **)&d_mini, sizeof(double));
     cudaMemcpy(d_mini, h_mini, sizeof(double), cudaMemcpyHostToDevice);
@@ -242,8 +274,9 @@ int main()
     checkCUDAError("cudaMemcpy calls1");
 
     int num_threads = 354;
-    int num_blocks = (NUM_PARTICLES + num_threads) / num_threads + 1;
+    int num_blocks = (NUM_PARTICLES + num_threads) / (num_threads + 1);
     //std::cout << "blocks = " << num_blocks;
+    cout << num_threads << " " << num_blocks << endl;
 
     cudaEvent_t start, stop;
     cudaEventCreate(&start);
@@ -255,10 +288,23 @@ int main()
     num_threads = (NUM_PARTICLES * (NUM_PARTICLES + 1) / 2);
     num_blocks = (num_threads / 1024) + 1;
     cout << num_threads << " " << num_blocks << endl;
-    set_distances<<<num_blocks, 1024>>>(d_jets, d_distances,
+    set_distances<<<num_blocks, 1024>>>(d_jets, d_distances, d_indices,
                                         NUM_PARTICLES);
-    reduction_min<<<num_blocks, 1024>>>(d_jets, d_distances,
-                                        NUM_PARTICLES);
+
+    double *d_out = 0;
+    cudaMalloc((void **)&d_out, num_blocks * sizeof(double));
+    reduction_min<<<num_blocks, 1024,
+                    1024 * sizeof(double) + 1024 * sizeof(int)>>>(d_distances,
+                                                                  d_out,
+                                                                  d_indices,
+                                                                  num_threads);
+
+    reduction_min<<<1, 64,
+                    num_blocks * sizeof(double) + num_blocks * sizeof(int)>>>(
+        d_out,
+        d_out,
+        d_indices,
+        num_blocks);
     cudaEventRecord(stop);
 
     // Check for any CUDA errors
@@ -267,10 +313,23 @@ int main()
                NUM_PARTICLES * sizeof(PseudoJet),
                cudaMemcpyDeviceToHost);
 
-    double *h_distances = 0;
-    h_distances = (double *)malloc(num_threads * sizeof(double));
-    cudaMemcpy(h_distances, d_distances, num_threads * sizeof(double),
+    double *h_out = 0;
+    h_out = (double *)malloc(num_blocks * sizeof(double));
+    cudaMemcpy(h_out, d_out, num_blocks * sizeof(double),
                cudaMemcpyDeviceToHost);
+    int *h_indices = 0;
+    h_indices = (int *)malloc(num_threads * sizeof(int));
+    cudaMemcpy(h_indices, d_indices, num_threads * sizeof(int),
+               cudaMemcpyDeviceToHost);
+    // for(int i = 0; i < num_blocks; i++)
+    cout << h_out[0] << endl;
+    cout << h_indices[0] << endl;
+
+    int ii = num_threads - 1 - h_indices[0];
+    int k = floor((sqrt(8.0 * ii + 1) - 1) / 2);
+    int r = NUM_PARTICLES - 1 - k;
+    int c = h_indices[0] - num_threads + ((k + 1) * (k + 2) / 2) + r;
+    cout << r << " " << c << endl;
 
     // for (int tid = 0; tid < num_threads; tid++)
     // {
@@ -320,7 +379,7 @@ int main()
     // free host memory
     free(h_jets);
     free(h_mini);
-    free(h_distances);
+    free(h_out);
 
     return 0;
 }
