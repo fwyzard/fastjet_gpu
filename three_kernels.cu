@@ -29,8 +29,8 @@ const double MaxRap = 1e5;
 const double R = 0.6;
 const double R2 = R * R;
 const double invR2 = 1.0 / R2;
-// const double ptmin = 5.0;
-// const double dcut = ptmin * ptmin;
+const double ptmin = 5.0;
+const double dcut = ptmin * ptmin;
 int const NUM_PARTICLES = 354;
 
 __device__ void _set_jet(PseudoJet &jet)
@@ -104,6 +104,14 @@ __device__ double yij_distance(PseudoJet &jet1, PseudoJet &jet2)
            invR2;
 }
 
+__device__ void tid_to_ij(int &i, int &j, int tid, int n, int N)
+{
+    int ii = N - 1 - tid;
+    int k = floor((sqrt(8.0 * ii + 1) - 1) / 2);
+    i = n - 1 - k;
+    j = tid - N + ((k + 1) * (k + 2) / 2) + i;
+}
+
 double plain_distance_h(PseudoJet &jet1, PseudoJet &jet2)
 {
     double dphi = abs(jet1.phi - jet2.phi);
@@ -151,10 +159,8 @@ __global__ void set_distances(PseudoJet *jets, double *distances,
 
     indices[tid] = tid;
 
-    int ii = N - 1 - tid;
-    int k = floor((sqrt(8.0 * ii + 1) - 1) / 2);
-    int i = num_particles - 1 - k;
-    int j = tid - N + ((k + 1) * (k + 2) / 2) + i;
+    int i, j;
+    tid_to_ij(i, j, tid, num_particles, N);
 
     if (i == j)
     {
@@ -163,6 +169,8 @@ __global__ void set_distances(PseudoJet *jets, double *distances,
     else
     {
         distances[tid] = yij_distance(jets[i], jets[j]);
+        // if (distances[tid] <= 0.0000003)
+        // printf("i = %d j = %d tid = %d d = %15.8e\n", i, j, tid, distances[tid]);
     }
     // __syncthreads();
 
@@ -195,12 +203,32 @@ __global__ void set_distances(PseudoJet *jets, double *distances,
     // printf("%d %10.5f\n", tid, distances[tid]);
 }
 
-__global__ void reduction_min(double *distances, double *out, int *indices,
-                              int const num_particles)
+__global__ void recalculate_distances(PseudoJet *jets, double *distances,
+                                      int const num_particles,
+                                      int const row, int const column)
+{
+    int tid = blockDim.x * blockIdx.x + threadIdx.x;
+    int i = num_particles * tid + column;
+
+    if (tid > row)
+        return;
+
+     printf("tid = %d, column = %d\n", tid, column);
+
+    if (tid == column)
+        distances[i] = jets[tid].diB;
+    else
+        distances[i] = yij_distance(jets[tid], jets[column]);
+}
+
+__global__ void reduction_min(PseudoJet *jets, double *distances, double *out, int *indices,
+                              int const num_particles, int const memory_size,
+                              int const array_size, bool const first)
 {
     // int N = num_particles * (num_particles + 1) / 2;
     extern __shared__ double sdata[];
-    extern __shared__ int sindices[];
+    double *s_distances = sdata;
+    int *s_indices = (int *)&s_distances[memory_size];
 
     unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned int i = threadIdx.x;
@@ -208,18 +236,23 @@ __global__ void reduction_min(double *distances, double *out, int *indices,
     if (tid >= num_particles)
         return;
 
-    sdata[i] = distances[tid];
-    // sindices[tid] = tid;
+    s_distances[i] = distances[tid];
+
+    if (first)
+        s_indices[i] = tid;
+    else
+        s_indices[i] = indices[tid];
     __syncthreads();
 
     for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1)
     {
         if (i < s && (tid + s) < num_particles)
         {
-            if (sdata[i] > sdata[i + s])
+            if (s_distances[i] > s_distances[i + s])
             {
-                sdata[i] = sdata[i + s];
-                sindices[i] = tid + s;
+                s_distances[i] = s_distances[i + s];
+
+                s_indices[i] = s_indices[i + s];
             }
         }
         __syncthreads();
@@ -227,10 +260,46 @@ __global__ void reduction_min(double *distances, double *out, int *indices,
 
     if (i == 0)
     {
-        out[blockIdx.x] = sdata[0];
-        indices[blockIdx.x] = sindices[0];
+        out[blockIdx.x] = s_distances[0];
+        int min_tid = s_indices[0];
+        indices[blockIdx.x] = min_tid;
+
+        // printf("d = %20.17f i = %d\n", s_distances[0], s_indices[0]);
+        if (!first)
+        {
+            int N = array_size * (array_size + 1) / 2;
+            int i, j;
+            tid_to_ij(i, j, min_tid, array_size, N);
+            printf("i = %d, j = %d\n", i, j);
+
+            if (i == j)
+            {
+                jets[j] = jets[array_size - 1];
+            }
+            else
+            {
+                jets[i].px += jets[j].px;
+                jets[i].py += jets[j].py;
+                jets[i].pz += jets[j].pz;
+                jets[i].E += jets[j].E;
+                _set_jet(jets[i]);
+
+                jets[j] = jets[array_size - 1];
+            }
+
+            if (j + 1 < 1024)
+                recalculate_distances<<<1, (j + 1)>>>(
+                    jets, distances, array_size, i, j);
+            else
+            {
+                int num_blocks = ((j + 1) / 1024) + 1;
+                recalculate_distances<<<num_blocks, 1024>>>(
+                    jets, distances, array_size, i, j);
+            }
+        }
     }
 }
+
 
 int main()
 {
@@ -293,18 +362,33 @@ int main()
 
     double *d_out = 0;
     cudaMalloc((void **)&d_out, num_blocks * sizeof(double));
-    reduction_min<<<num_blocks, 1024,
-                    1024 * sizeof(double) + 1024 * sizeof(int)>>>(d_distances,
-                                                                  d_out,
-                                                                  d_indices,
-                                                                  num_threads);
+    for (int n = NUM_PARTICLES; n > 0; n--)
+    {
+        num_threads = (n * (n + 1) / 2);
+        num_blocks = (num_threads / 1024) + 1;
+        // cout << num_threads << " " << num_blocks << endl;
+        reduction_min<<<num_blocks, 1024,
+                        1024 * sizeof(double) + 1024 * sizeof(int)>>>(
+            d_jets,
+            d_distances,
+            d_out,
+            d_indices,
+            num_threads,
+            1024,
+            n,
+            true);
 
-    reduction_min<<<1, 64,
-                    num_blocks * sizeof(double) + num_blocks * sizeof(int)>>>(
-        d_out,
-        d_out,
-        d_indices,
-        num_blocks);
+        reduction_min<<<1, 64,
+                        num_blocks * sizeof(double) + num_blocks * sizeof(int)>>>(
+            d_jets,
+            d_out,
+            d_out,
+            d_indices,
+            num_blocks,
+            num_blocks,
+            n,
+            false);
+    }
     cudaEventRecord(stop);
 
     // Check for any CUDA errors
@@ -322,14 +406,20 @@ int main()
     cudaMemcpy(h_indices, d_indices, num_threads * sizeof(int),
                cudaMemcpyDeviceToHost);
     // for(int i = 0; i < num_blocks; i++)
-    cout << h_out[0] << endl;
-    cout << h_indices[0] << endl;
+    // cout << h_out[0] << endl;
+    // cout << h_indices[0] << endl;
 
-    int ii = num_threads - 1 - h_indices[0];
-    int k = floor((sqrt(8.0 * ii + 1) - 1) / 2);
-    int r = NUM_PARTICLES - 1 - k;
-    int c = h_indices[0] - num_threads + ((k + 1) * (k + 2) / 2) + r;
-    cout << r << " " << c << endl;
+    for (int i = 0; i < NUM_PARTICLES; i++)
+        if (h_jets[i].diB > dcut)
+            printf("%15.8f %15.8f %15.8f\n",
+                   h_jets[i].rap, h_jets[i].phi, sqrt(h_jets[i].diB));
+
+    // int ii = num_threads - 1 - h_indices[0];
+    // int k = floor((sqrt(8.0 * ii + 1) - 1) / 2);
+    // int r = NUM_PARTICLES - 1 - k;
+    // int c = h_indices[0] - num_threads + ((k + 1) * (k + 2) / 2) + r;
+    // cout << r << " " << c << endl;
+    // cout << yij_distance_h(h_jets[r], h_jets[c]) << endl;
 
     // for (int tid = 0; tid < num_threads; tid++)
     // {
