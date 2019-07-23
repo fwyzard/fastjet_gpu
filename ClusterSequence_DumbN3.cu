@@ -21,6 +21,7 @@ struct PseudoJet
     double diB;
     double phi;
     double rap;
+    bool isJet;
 };
 
 const double pi = 3.141592653589793238462643383279502884197;
@@ -36,6 +37,7 @@ int const NUM_PARTICLES = 354;
 __device__ void _set_jet(PseudoJet &jet)
 {
     jet.diB = jet.px * jet.px + jet.py * jet.py;
+    jet.isJet = false;
 
     if (jet.diB == 0.0)
     {
@@ -262,8 +264,11 @@ __global__ void dumb_n3(PseudoJet *jets, int num_particles)
                 // printf("%15.8f %15.8f %15.8f\n",
                 //    s_jets[ii].rap, s_jets[ii].phi, sqrt(s_jets[ii].diB));
 
-                jets[ii] = s_jets[ii];
+                s_jets[ii].isJet = true;
+                jets[num_particles - 1] = s_jets[ii];
                 s_jets[ii] = s_jets[num_particles - 1];
+
+                // s_jets[ii] = s_jets[num_particles - 1];
             }
         }
 
@@ -326,7 +331,7 @@ int main()
     // Check for any CUDA errors
     checkCUDAError("cudaMemcpy2 calls");
     for (int i = 0; i < NUM_PARTICLES; i++)
-        if (h_jets[i].diB > dcut)
+        if (h_jets[i].diB > dcut && h_jets[i].isJet)
             printf("%15.8f %15.8f %15.8f\n",
                    h_jets[i].rap, h_jets[i].phi, sqrt(h_jets[i].diB));
 
