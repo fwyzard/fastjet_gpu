@@ -169,7 +169,7 @@ __device__ void tid_to_ij(int &i, int &j, int tid, int n, int N)
     // i = tid - N + ((k + 1) * (k + 2) / 2) + j;
     tid += 1;
     j = std::ceil(std::sqrt(2 * tid + 0.25) - 0.5);
-    i = tid - (j - 1) * j / 2;
+    i = trunc(tid - (j - 1) * j / 2.0);
     j -= 1;
     i -= 1;
 }
@@ -292,16 +292,16 @@ __global__ void recalculate_distances(PseudoJet *jets, double *distances,
                                       int *indices, int const num_particles, int const n)
 {
     int tid = blockDim.x * blockIdx.x + threadIdx.x;
-    int N = num_particles * (num_particles + 1) / 2;
+    int N = n * (n + 1) / 2;
     int i, j;
     int index = indices[0];
-    tid_to_ij(i, j, index, num_particles, N);
+    tid_to_ij(i, j, index, n, N);
     // bool flag = false;
     if (j >= n)
     {
         // printf("tid = %d, i = %d, j = %d\n", tid, i, j);
         // flag = true;
-        tid_to_ij(i, j, index - 1, num_particles, N);
+        tid_to_ij(i, j, index - n, n, N);
         // printf("tid = %d, i = %d, j = %d\n", tid, i, j);
     }
     int tid_j = tid + ((j) * (j + 1) / 2);
@@ -312,11 +312,16 @@ __global__ void recalculate_distances(PseudoJet *jets, double *distances,
     if (tid >= n)
         return;
 
+    // if (tid == 0)
+    // {
+    //     printf("dist136285 = %15.8e\n", distances[40891]);
+    //     printf("dist235249 = %15.8e\n", distances[31360]);
+    // }
+
     if (tid == j)
     {
         distances[tid_j] = jets[tid].diB;
         // printf("tid = %d, i = %d, j = %d, dist = %15.8e\n", tid, i, j, jets[tid].diB);
-        // printf("dist325 = %15.8e\n", distances[62400]);
         // printf("dist31360 %15.8e\n", distances[31360]);
     }
     else if (tid < j)
@@ -327,7 +332,7 @@ __global__ void recalculate_distances(PseudoJet *jets, double *distances,
     }
     else
     {
-        int tid_j = j + ((tid) * (tid + 1) / 2);
+        tid_j = j + ((tid) * (tid + 1) / 2);
         distances[tid_j] = yij_distance(jets[tid], jets[j]);
     }
 
@@ -353,20 +358,31 @@ __global__ void recalculate_distances(PseudoJet *jets, double *distances,
         // printf("tid_i = %d, tid = %d, i = %d, j = %d\n", tid_i, tid, i, j);
     }
 
-    if (i == 87 && j == 249)
-    {
-        printf("tid = %d, tid_i = %d, tid_j = %d\n di = %20.8e, dj = %20.8d\n",
-               tid, tid_i, tid_j, distances[tid_i], distances[tid_j]);
-        printf("jet \n px = %20.8e\n py = %20.8e\n pz = %20.8e\n E = %20.8e\n diB = %20.8e\n phi = %20.8e\n rap = %20.8e\n",
-               jets[tid].px, jets[tid].py, jets[tid].pz, jets[tid].E, jets[tid].diB,
-               jets[tid].phi, jets[tid].rap);
-        printf("jet 87\n px = %20.8e\n py = %20.8e\n pz = %20.8e\n E = %20.8e\n diB = %20.8e\n phi = %20.8e\n rap = %20.8e\n",
-               jets[87].px, jets[87].py, jets[87].pz, jets[87].E, jets[87].diB,
-               jets[87].phi, jets[87].rap);
-        printf("jet 249\n px = %20.8e\n py = %20.8e\n pz = %20.8e\n E = %20.8e\n diB = %20.8e\n phi = %20.8e\n rap = %20.8e\n",
-               jets[249].px, jets[249].py, jets[249].pz, jets[249].E, jets[249].diB,
-               jets[249].phi, jets[249].rap);
-    }
+    // if ((distances[tid_i] < 9.9e-4 || distances[tid_j] < 9.9e-4) && j == 249)
+    // {
+    //     printf("tid = %d, tid_i = %d, tid_i = %d, i = %d, j = %d\n di = %20.8e, dj = %20.8e, yij_i = %20.8e, yij_j = %20.8e\n",
+    //            tid, tid_i, tid_j, i, j, distances[tid_i], distances[tid_j], yij_distance(jets[tid], jets[i]), yij_distance(jets[tid], jets[j]));
+    // }
+    // if (i == 87 && j == 249)
+    // {
+    //     printf("tid = %d, tid_i = %d, tid_i = %d, i = %d, j = %d\n di = %20.8e, dj = %20.8e, yij_i = %20.8e, yij_j = %20.8e\n",
+    //            tid, tid_i, tid_j, i, j, distances[tid_i], distances[tid_j], yij_distance(jets[tid], jets[i]), yij_distance(jets[tid], jets[j]));
+    //     printf("jet \n px = %20.8e\n py = %20.8e\n pz = %20.8e\n E = %20.8e\n diB = %20.8e\n phi = %20.8e\n rap = %20.8e\n",
+    //            jets[tid].px, jets[tid].py, jets[tid].pz, jets[tid].E, jets[tid].diB,
+    //            jets[tid].phi, jets[tid].rap);
+    //     printf("jet \n px = %20.8e\n py = %20.8e\n pz = %20.8e\n E = %20.8e\n diB = %20.8e\n phi = %20.8e\n rap = %20.8e\n",
+    //            jets[i].px, jets[i].py, jets[i].pz, jets[i].E, jets[i].diB,
+    //            jets[i].phi, jets[i].rap);
+    //     printf("jet \n px = %20.8e\n py = %20.8e\n pz = %20.8e\n E = %20.8e\n diB = %20.8e\n phi = %20.8e\n rap = %20.8e\n",
+    //            jets[j].px, jets[j].py, jets[j].pz, jets[j].E, jets[j].diB,
+    //            jets[j].phi, jets[j].rap);
+    //     printf("jet 87\n px = %20.8e\n py = %20.8e\n pz = %20.8e\n E = %20.8e\n diB = %20.8e\n phi = %20.8e\n rap = %20.8e\n",
+    //            jets[87].px, jets[87].py, jets[87].pz, jets[87].E, jets[87].diB,
+    //            jets[87].phi, jets[87].rap);
+    //     printf("jet 249\n px = %20.8e\n py = %20.8e\n pz = %20.8e\n E = %20.8e\n diB = %20.8e\n phi = %20.8e\n rap = %20.8e\n",
+    //            jets[249].px, jets[249].py, jets[249].pz, jets[249].E, jets[249].diB,
+    //            jets[249].phi, jets[249].rap);
+    // }
 }
 
 __global__ void reduction_min(PseudoJet *jets, double *distances, double *out, int *indices,
@@ -424,7 +440,7 @@ __global__ void reduction_min(PseudoJet *jets, double *distances, double *out, i
 
             if (i == j)
             {
-                printf("%5.d %5.d %20.8e %15.d\n", i, -2, s_distances[0], min_tid);
+                // printf("%d %d\n", i, -2);
                 // printf("%d %d %d %f\n", // min_tid = %d, dist = %15.8e, prep = %15.8f\n",
                 //    i, -2);               //, min_tid, s_distances[0], sqrt(s_distances[0]));
                 PseudoJet temp;
@@ -435,18 +451,18 @@ __global__ void reduction_min(PseudoJet *jets, double *distances, double *out, i
             }
             else
             {
-                printf("%5.d %5.d %20.8e %15.d\n", i, j, s_distances[0], min_tid);
+                // printf("%d %d\n", i, j);
                 // printf("%d %d\n", // min_tid = %d, dist = %15.8e, prep = %15.8f\n",
                 //    i, j);                //, min_tid, s_distances[0], sqrt(s_distances[0]));
-                if (i == 87 && j == 249)
-                {
-                    printf("jet 87\n px = %20.8e\n py = %20.8e\n pz = %20.8e\n E = %20.8e\n diB = %20.8e\n phi = %20.8e\n rap = %20.8e\n",
-                           jets[87].px, jets[87].py, jets[87].pz, jets[87].E, jets[87].diB,
-                           jets[87].phi, jets[87].rap);
-                    printf("jet 249\n px = %20.8e\n py = %20.8e\n pz = %20.8e\n E = %20.8e\n diB = %20.8e\n phi = %20.8e\n rap = %20.8e\n",
-                           jets[249].px, jets[249].py, jets[249].pz, jets[249].E, jets[249].diB,
-                           jets[249].phi, jets[249].rap);
-                }
+                // if (i == 87 && j == 249)
+                // {
+                //     printf("jet 87\n px = %20.8e\n py = %20.8e\n pz = %20.8e\n E = %20.8e\n diB = %20.8e\n phi = %20.8e\n rap = %20.8e\n",
+                //            jets[87].px, jets[87].py, jets[87].pz, jets[87].E, jets[87].diB,
+                //            jets[87].phi, jets[87].rap);
+                //     printf("jet 249\n px = %20.8e\n py = %20.8e\n pz = %20.8e\n E = %20.8e\n diB = %20.8e\n phi = %20.8e\n rap = %20.8e\n",
+                //            jets[249].px, jets[249].py, jets[249].pz, jets[249].E, jets[249].diB,
+                //            jets[249].phi, jets[249].rap);
+                // }
                 jets[i].px += jets[j].px;
                 jets[i].py += jets[j].py;
                 jets[i].pz += jets[j].pz;
@@ -482,25 +498,11 @@ int main()
         _set_jet_h(h_jets[i]);
     }
 
-    /* 
-    double *h_distances = 0;
-    h_distances = (double *)malloc((NUM_PARTICLES * (NUM_PARTICLES + 1) / 2) * sizeof(double));
-    double *hh_distances = 0;
-    hh_distances = (double *)malloc((NUM_PARTICLES * (NUM_PARTICLES + 1) / 2) * sizeof(double));
-    int ii, jj;
-    for (i = 0; i < (NUM_PARTICLES * (NUM_PARTICLES + 1) / 2); i++)
-    {
-        tid_to_ij_h(ii, jj, i, NUM_PARTICLES, (NUM_PARTICLES * (NUM_PARTICLES + 1) / 2));
-        if (ii == jj)
-        {
-            h_distances[i] = h_jets[ii].diB;
-        }
-        else
-        {
-            h_distances[i] = yij_distance_h(h_jets[ii], h_jets[jj]);
-        }
-    }
-*/
+    // double *h_distances = 0;
+    // h_distances = (double *)malloc((NUM_PARTICLES * (NUM_PARTICLES + 1) / 2) * sizeof(double));
+    // double *hh_distances = 0;
+    // hh_distances = (double *)malloc((NUM_PARTICLES * (NUM_PARTICLES + 1) / 2) * sizeof(double));
+    // int ii, jj;
 
     PseudoJet *d_jets = 0;
     cudaMalloc((void **)&d_jets, NUM_PARTICLES * sizeof(PseudoJet));
@@ -571,14 +573,42 @@ int main()
         recalculate_distances<<<(NUM_PARTICLES / 1024) + 1, 1024>>>(
             d_jets, d_distances, d_indices, NUM_PARTICLES, n - 1);
         // cudaDeviceSynchronize();
+
+        // for (i = 0; i < (n * (n + 1) / 2); i++)
+        // {
+        //     tid_to_ij_h(ii, jj, i, n, (n * (n + 1) / 2));
+        //     if (ii == jj)
+        //     {
+        //         h_distances[i] = h_jets[ii].diB;
+        //     }
+        //     else
+        //     {
+        //         h_distances[i] = yij_distance_h(h_jets[ii], h_jets[jj]);
+        //     }
+        // }
+
+        // cudaMemcpy(hh_distances, d_distances, num_threads * sizeof(double),
+        //            cudaMemcpyDeviceToHost);
+        // double error = 0;
+        // for (i = 0; i < (n * (n + 1) / 2); i++)
+        // {
+        //     error += hh_distances[i] - h_distances[i];
+        //     if (!double_equals(hh_distances[i], h_distances[i]))
+        //     {
+        //         tid_to_ij_h(ii, jj, i, n, (n * (n+1) / 2));
+        //         printf("tid = %d, i = %d, j = %d, h_d = %15.8e, d_d = %15.8e\n",
+        //                i, ii, jj, h_distances[i], hh_distances[i]);
+        //     }
+        // }
+        // cout << "error = " << error << endl;
     }
     cudaEventRecord(stop);
-
-    // Check for any CUDA errors
-    checkCUDAError("kernal launch");
     cudaMemcpy(h_jets, d_jets,
                NUM_PARTICLES * sizeof(PseudoJet),
                cudaMemcpyDeviceToHost);
+
+    // Check for any CUDA errors
+    checkCUDAError("kernal launch");
 
     double *h_out = 0;
     h_out = (double *)malloc(num_blocks * sizeof(double));
@@ -588,22 +618,6 @@ int main()
     h_indices = (int *)malloc(num_threads * sizeof(int));
     cudaMemcpy(h_indices, d_indices, num_threads * sizeof(int),
                cudaMemcpyDeviceToHost);
-    /*
-    cudaMemcpy(hh_distances, d_distances, num_threads * sizeof(double),
-               cudaMemcpyDeviceToHost);
-    double error = 0;
-    for (i = 0; i < (NUM_PARTICLES * (NUM_PARTICLES + 1) / 2); i++)
-    {
-        error += hh_distances[i] - h_distances[i];
-        if (!double_equals(hh_distances[i], h_distances[i]))
-        {
-            tid_to_ij_h(ii, jj, i, NUM_PARTICLES, num_threads);
-            printf("tid = %d, i = %d, j = %d, h_d = %15.8e, d_d = %15.8e\n",
-                   i, ii, jj, h_distances[i], hh_distances[i]);
-        }
-    }
-    cout << "error = " << error << endl;
-*/
 
     // for(int i = 0; i < num_blocks; i++)
     // cout << h_out[0] << endl;
@@ -611,7 +625,7 @@ int main()
 
     for (int i = 0; i < NUM_PARTICLES; i++)
         // if (h_jets[i].isJet && h_jets[i].diB >= dcut)
-        if (h_jets[i].diB >= dcut)
+        if (h_jets[i].diB >= dcut && h_jets[i].isJet)
             printf("%15.8f %15.8f %15.8f\n",
                    h_jets[i].rap, h_jets[i].phi, sqrt(h_jets[i].diB));
 
