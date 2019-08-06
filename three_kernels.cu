@@ -5,7 +5,7 @@
 #include <stdio.h>
 
 // Here you can set the device ID that was assigned to you
-#define MYDEVICE 5
+#define MYDEVICE 0
 
 // Simple utility function to check for CUDA runtime errors
 void checkCUDAError(const char *msg);
@@ -142,6 +142,7 @@ __global__ void set_jets(PseudoJet *jets) {
 }
 
 __global__ void set_distances(PseudoJet *jets, double *distances, int *indices,
+                              int *indices_ii, int *indices_jj,
                               int const num_particles) {
   int tid = blockDim.x * blockIdx.x + threadIdx.x;
   int N = num_particles * (num_particles + 1) / 2;
@@ -153,6 +154,8 @@ __global__ void set_distances(PseudoJet *jets, double *distances, int *indices,
 
   int i, j;
   tid_to_ij(i, j, tid);
+  indices_ii[tid] = i;
+  indices_jj[tid] = j;
 
   if (i == j) {
     distances[tid] = jets[i].diB;
@@ -162,14 +165,19 @@ __global__ void set_distances(PseudoJet *jets, double *distances, int *indices,
 }
 
 __global__ void recalculate_distances(PseudoJet *jets, double *distances,
-                                      int *indices, int const n) {
+                                      int *indices, int *indices_ii,
+                                      int *indices_jj, int const n) {
   int tid = blockDim.x * blockIdx.x + threadIdx.x;
   int i, j;
   int index = indices[0];
-  tid_to_ij(i, j, index);
+  // tid_to_ij(i, j, index);
+  i = indices_ii[index];
+  j = indices_jj[index];
 
   if (j >= n) {
-    tid_to_ij(i, j, index - n);
+    // tid_to_ij(i, j, index - n);
+    i = indices_ii[index - n];
+    j = indices_jj[index - n];
   }
   int tid_j = tid + ((j) * (j + 1) / 2);
 
@@ -201,6 +209,7 @@ __global__ void recalculate_distances(PseudoJet *jets, double *distances,
 
 __global__ void reduction_min_first(PseudoJet *jets, double *distances,
                                     double *distances_out, int *indices,
+                                    int *indices_ii, int *indices_jj,
                                     int const distances_array_size,
                                     int const num_particles) {
   extern __shared__ double sdata[];
@@ -217,10 +226,12 @@ __global__ void reduction_min_first(PseudoJet *jets, double *distances,
   s_indices[i] = tid;
   __syncthreads();
 
-  int ii, jj;
+  int jj;
   for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {
     if (i < s && (tid + s) < distances_array_size) {
-      tid_to_ij(ii, jj, s_indices[i + s]);
+      // tid_to_ij(ii, jj, s_indices[i + s]);
+      // ii = indices_ii[s_indices[i + s]];
+      jj = indices_jj[s_indices[i + s]];
       if (s_distances[i] > s_distances[i + s] && jj < num_particles) {
         s_distances[i] = s_distances[i + s];
 
@@ -239,6 +250,7 @@ __global__ void reduction_min_first(PseudoJet *jets, double *distances,
 
 __global__ void reduction_min_second(PseudoJet *jets, double *distances,
                                      double *distances_out, int *indices,
+                                     int *indices_ii, int *indices_jj,
                                      int const distances_array_size,
                                      int const num_particles) {
   extern __shared__ double sdata[];
@@ -255,10 +267,12 @@ __global__ void reduction_min_second(PseudoJet *jets, double *distances,
   s_indices[i] = indices[tid];
   __syncthreads();
 
-  int ii, jj;
+  int jj;
   for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {
     if (i < s && (tid + s) < distances_array_size) {
-      tid_to_ij(ii, jj, s_indices[i + s]);
+      // tid_to_ij(ii, jj, s_indices[i + s]);
+      // ii = indices_ii[s_indices[i + s]];
+      jj = indices_jj[s_indices[i + s]];
       if (s_distances[i] > s_distances[i + s] && jj < num_particles) {
         s_distances[i] = s_distances[i + s];
 
@@ -274,7 +288,9 @@ __global__ void reduction_min_second(PseudoJet *jets, double *distances,
     indices[blockIdx.x] = min_tid;
 
     int i, j;
-    tid_to_ij(i, j, min_tid);
+    // tid_to_ij(i, j, min_tid);
+    i = indices_ii[min_tid];
+    j = indices_jj[min_tid];
 
     if (i == j) {
       PseudoJet temp;
@@ -295,14 +311,14 @@ __global__ void reduction_min_second(PseudoJet *jets, double *distances,
 }
 
 int main() {
-  int d_id;
-  cudaDeviceProp d_prop;
+  cudaSetDevice(0);
+  cudaDeviceProp prop;
+  cudaGetDeviceProperties(&prop, 0);
 
-  cudaChooseDevice(&d_id, &d_prop);
-  cudaSetDevice(MYDEVICE);
+  printf("Device Name: %s\n", prop.name);
 
   int NUM_PARTICLES = 0;
-  int NUM_EVENTS = 10;
+  int NUM_EVENTS = 9;
 
   for (int event = 0; event < NUM_EVENTS; event++) {
     PseudoJet *h_jets = NULL;
@@ -363,6 +379,12 @@ int main() {
     int *d_indices = 0;
     cudaMalloc((void **)&d_indices,
                (NUM_PARTICLES * (NUM_PARTICLES + 1) / 2) * sizeof(int));
+    int *d_indices_ii = 0;
+    cudaMalloc((void **)&d_indices_ii,
+               (NUM_PARTICLES * (NUM_PARTICLES + 1) / 2) * sizeof(int));
+    int *d_indices_jj = 0;
+    cudaMalloc((void **)&d_indices_jj,
+               (NUM_PARTICLES * (NUM_PARTICLES + 1) / 2) * sizeof(int));
 
     int num_threads = 354;
     int num_blocks = (NUM_PARTICLES + num_threads) / (num_threads + 1);
@@ -376,6 +398,7 @@ int main() {
     num_threads = (NUM_PARTICLES * (NUM_PARTICLES + 1) / 2);
     num_blocks = (num_threads / 1024) + 1;
     set_distances<<<num_blocks, 1024>>>(d_jets, d_distances, d_indices,
+                                        d_indices_ii, d_indices_jj,
                                         NUM_PARTICLES);
 
     for (int n = NUM_PARTICLES; n > 0; n--) {
@@ -384,30 +407,32 @@ int main() {
 
       reduction_min_first<<<num_blocks, 1024,
                             1024 * sizeof(double) + 1024 * sizeof(int)>>>(
-          d_jets, d_distances, d_out, d_indices, num_threads, n);
+          d_jets, d_distances, d_out, d_indices, d_indices_ii, d_indices_jj,
+          num_threads, n);
 
       reduction_min_second<<<1, num_blocks, num_blocks * sizeof(double) +
                                                 num_blocks * sizeof(int)>>>(
-          d_jets, d_out, d_out, d_indices, num_blocks, n);
+          d_jets, d_out, d_out, d_indices, d_indices_ii, d_indices_jj,
+          num_blocks, n);
 
       recalculate_distances<<<(NUM_PARTICLES / 1024) + 1, 1024>>>(
-          d_jets, d_distances, d_indices, n - 1);
+          d_jets, d_distances, d_indices, d_indices_ii, d_indices_jj, n - 1);
     }
 
     cudaEventRecord(stop);
     cudaMemcpy(h_jets, d_jets, NUM_PARTICLES * sizeof(PseudoJet),
                cudaMemcpyDeviceToHost);
 
-    // Check for any CUDA errors
-    checkCUDAError("kernal launch");
+    // // Check for any CUDA errors
+    // checkCUDAError("kernal launch");
 
-    double *h_out = 0;
-    h_out = (double *)malloc(num_blocks * sizeof(double));
-    cudaMemcpy(h_out, d_out, num_blocks * sizeof(double),
-               cudaMemcpyDeviceToHost);
+    // double *h_out = 0;
+    // h_out = (double *)malloc(num_blocks * sizeof(double));
+    // cudaMemcpy(h_out, d_out, num_blocks * sizeof(double),
+    //            cudaMemcpyDeviceToHost);
 
-    // Check for any CUDA errors
-    checkCUDAError("cudaMemcpy calls");
+    // // Check for any CUDA errors
+    // checkCUDAError("cudaMemcpy calls");
 
     cudaEventSynchronize(stop);
     float milliseconds = 0;
@@ -423,12 +448,14 @@ int main() {
     cudaFree(d_jets);
     cudaFree(d_distances);
     cudaFree(d_indices);
+    cudaFree(d_indices_ii);
+    cudaFree(d_indices_jj);
     cudaFree(d_out);
 
     // free host memory
     free(h_jets);
     // free(h_more_jets);
-    free(h_out);
+    // free(h_out);
   }
 
   return 0;
