@@ -19,11 +19,11 @@ const double ptmin = 5.0;
 const double dcut = ptmin * ptmin;
 
 struct PseudoJet {
-  int index;
   double px;
   double py;
   double pz;
   double E;
+  int index;
   bool isJet;
 };
 
@@ -53,8 +53,6 @@ __device__ double plain_distance(EtaPhi &p1, EtaPhi &p2) {
 }
 
 __device__ Dist yij_distance(EtaPhi *points, int i, int j) {
-  // k is the one in qusetion
-  // d k tid
   if (i > j) {
     int t = i;
     i = j;
@@ -64,7 +62,6 @@ __device__ Dist yij_distance(EtaPhi *points, int i, int j) {
   Dist d;
   d.i = i;
   d.j = j;
-  // if k == tid return diB
   if (i == j)
     d.distance = points[i].diB;
   else
@@ -119,67 +116,39 @@ __host__ __device__ EtaPhi _set_jet(PseudoJet &jet) {
   return point;
 }
 
-// __global__ void reduce(points, min_dists, int k) {
-//   extern __shared__ Dist sdata[];
-//   EtaPhi *points = (EtaPhi *)&sdata[k];
+__global__ void set_points(PseudoJet *jets, EtaPhi *points) {
+  int tid = threadIdx.x;
+  points[tid] = _set_jet(jets[tid]);
+}
 
-//   int tid = threadIdx.x;
-
-//   for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {
-//     if (tid < s && (tid + s) <= k) {
-//       if (sdata[tid + s].distance < sdata[tid].distance) {
-//         sdata[tid] = sdata[tid + s];
-//       }
-//     }
-//     __syncthreads();
-//   }
-
-//   // Minimum of the row
-//   if (tid == 0) {
-//     min_dists[k] = sdata[0];
-//   }
-// }
-
-__global__ void fastjet(PseudoJet *jets, EtaPhi *points, Dist *min_dists,
-                        int n) {
+__global__ void set_distances(EtaPhi *points, Dist *min_dists) {
   extern __shared__ Dist sdata[];
 
   int tid = threadIdx.x;
+  int k = blockIdx.x;
 
-  if (tid >= n)
+  if (tid > k)
     return;
 
-  int k;
-  // set the jets move them to shared memory
-  points[tid] = _set_jet(jets[tid]);
+  Dist d1, d2;
+
+  sdata[tid] = yij_distance(points, tid, k);
   __syncthreads();
 
-  // for (int i = n; i > 0; i--)
-  //   for (int j = tid; j > 0; j--)
-  //     points[tid * (tid - 1) / 2 + j] = _set_jet(jet[tid])
-
-  Dist d1;
-  Dist d2;
-
-  // set minimum distances array
-  // reduce rows minimum
-  for (k = n - 1; k > 1; k--) {
-    sdata[tid] = yij_distance(points, k, tid);
-    __syncthreads();
-
-    for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {
-      if (tid < s && (tid + s) <= k) {
-        if (sdata[tid + s].distance < sdata[tid].distance) {
-          sdata[tid] = sdata[tid + s];
-        }
+  for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {
+    if (tid < s && (tid + s) <= k) {
+      if (sdata[tid + s].distance < sdata[tid].distance) {
+        sdata[tid] = sdata[tid + s];
       }
-
-      __syncthreads();
     }
+    __syncthreads();
+  }
 
-    // __syncthreads();
-    // Minimum of the row
-    if (tid == 0) {
+  // Minimum of the row
+  if (tid == 0) {
+    min_dists[k] = sdata[0];
+
+    if (k == 0) {
       // Compute min for jet 0
       min_dists[0] = yij_distance(points, 0, 0);
 
@@ -190,43 +159,34 @@ __global__ void fastjet(PseudoJet *jets, EtaPhi *points, Dist *min_dists,
         min_dists[1] = d1;
       else
         min_dists[1] = d2;
-
-      if (k > 1)
-        min_dists[k] = sdata[0];
     }
-    // __syncthreads();
   }
+}
 
-  // __syncthreads();
-  // if (tid == 0) {
-  //   // printf("n = %d\n", n);
-  //   for (int i = 0; i < n; i++) {
-  //     printf("%4d%4d%20.8e\n", min_dists[i].i, min_dists[i].j,
-  //            min_dists[i].distance);
-  //   }
-  // }
+__global__ void fastjet(PseudoJet *jets, EtaPhi *points, Dist *dists,
+                        Dist *min_dists, int n) {
+  extern __shared__ Dist sdata[];
+
+  int tid = threadIdx.x;
+
+  if (tid >= n)
+    return;
+
+  int k;
+
+  Dist d1;
+  Dist d2;
 
   // loop
   bool first_run = true;
   while (n > 0) {
-    // // reduce all minimum
-    // __syncthreads();
     Dist min;
     Dist temp;
     sdata[tid] = min_dists[tid];
     __syncthreads();
 
-    // if (tid == 0) {
-    //   // printf("n = %d\n", n);
-    //   for (int i = 0; i < n; i++) {
-    //     printf("%4d%4d%20.8e\n", min_dists[i].i, min_dists[i].j,
-    //            min_dists[i].distance);
-    //   }
-    // }
-
     for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {
       if (tid < s && (tid + s) < n) {
-#pragma region
         if (!first_run) {
           // recalculate
 
@@ -251,8 +211,6 @@ __global__ void fastjet(PseudoJet *jets, EtaPhi *points, Dist *min_dists,
             }
           }
 
-          // if (min.i == 120)
-          //   print_distance(temp);
           // get d tid min.j
           if (min.j < n && tid > min.j) {
             temp = yij_distance(points, tid, min.j);
@@ -273,25 +231,7 @@ __global__ void fastjet(PseudoJet *jets, EtaPhi *points, Dist *min_dists,
               // print_distance(temp);
             }
           }
-          // if (min.j == 120)
-          //   print_distance(temp);
-          // get d tid+s min.i
-
-          // if (min.i < n) {
-
-          // }
-
-          // // if (min.i == 120)
-          // //   print_distance(temp);
-          // // get d tid+s min.j
-          // if (min.j < n) {
-
-          // }
-
-          // if (min.j == 120)
-          //   print_distance(temp);
         }
-#pragma endregion
         if (sdata[tid + s].distance < sdata[tid].distance) {
           sdata[tid] = sdata[tid + s];
         }
@@ -342,63 +282,25 @@ __global__ void fastjet(PseudoJet *jets, EtaPhi *points, Dist *min_dists,
         points[min.j] = points[n - 1];
         jets[min.j].index = min.j;
       }
-
-      // printf("i  : %4d%4d%15.8e%15.8e\n", min.i, jets[min.i].index,
-      //        jets[min.i].rap, points[min.i].eta);
-      // printf("j  : %4d%4d%15.8e%15.8e\n", min.j, jets[min.j].index,
-      //        jets[min.j].rap, points[min.j].eta);
-      // printf("n-1: %4d%4d%15.8e%15.8e\n", n - 1, jets[n - 1].index,
-      //        jets[n - 1].rap, points[n - 1].eta);
-      // printf("n ---> %6d %4d%4d%20.8e\n", n, sdata[0].i,
-      //        sdata[0].j == sdata[0].i ? -2 : sdata[0].j, sdata[0].distance);
-      // print_distance(min_dists[154]);
-      // Dist p = yij_distance(points, 309, 309);
-      // printf("%20.8e%20.8e%20.8e\n", points[340].eta, points[340].phi,
-      //  points[340].diB);
-      // printf("%20.8e%20.8e%20.8e\n", points[97].eta, points[97].phi,
-      //        points[97].diB);
-      // printf("%20.8e\n", p.distance);
-      // printf("%4d%4d%20.8e\n", min_dists[0].i, min_dists[0].j,
-      //        min_dists[0].distance);
-      // print_distance(p);
-      // print_distance(min_dists[309]);
-      // print_distance(min_dists[221]);
     }
     n--;
     if (tid >= n)
       return;
-    // __syncthreads();
-
-    // if (min_dists[tid].i == min.i || min_dists[tid].i == min.j ||
-    //     min_dists[tid].j == min.i || min_dists[tid].j == min.j ){
-    //     // min_dists[tid].j >= n || min_dists[tid].j >= n ||
-    //     // min_dists[tid].i >= n || min_dists[tid].i >= n) {
-    //   min_dists[tid].distance = -1;
-    //   // if (n == 120)
-    //   //   printf("%4d\n", tid);
-    // }
 
     __syncthreads();
     Dist d = min_dists[tid];
     if (d.i == min.i || d.j == min.i) {
-      min_dists[tid].distance = -1; // yij_distance(points, tid, min.i);
+      min_dists[tid].distance = -1;
     } else if (d.i == min.j || d.j == min.j) {
-      min_dists[tid].distance = -1; // yij_distance(points, tid, min.j);
+      min_dists[tid].distance = -1;
     }
 
-    // min_dists[min.i].distance = -1;
-    // min_dists[min.j].distance = -1;
     __syncthreads();
-    // if (tid == 0)
-    //   for (int i = 0; i < n; i++) {
-
-    //     printf("%4d%4d%20.8e\n", sdata[i].i, sdata[i].j,
-    //     sdata[i].distance);
-    //   }
 
     for (k = n - 1; k >= 0; k--) {
       if (min_dists[k].distance < 0) {
         sdata[tid] = yij_distance(points, k, tid);
+        // dists[(k * (k - 1) / 2) + tid];
         __syncthreads();
 
         for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {
@@ -528,6 +430,9 @@ int main() {
     thrust::device_vector<EtaPhi> d_points(n);
     EtaPhi *d_points_ptr = thrust::raw_pointer_cast(d_points.data());
 
+    thrust::device_vector<Dist> d_dists(n * (n + 1) / 2);
+    Dist *d_dists_ptr = thrust::raw_pointer_cast(d_dists.data());
+
     thrust::device_vector<Dist> d_min_dists(n);
     Dist *d_min_dists_ptr = thrust::raw_pointer_cast(d_min_dists.data());
 
@@ -537,8 +442,12 @@ int main() {
     cudaEventCreate(&stop);
     cudaEventRecord(start);
 
+    set_points<<<1, n>>>(d_jets_ptr, d_points_ptr);
+
+    set_distances<<<n, 512, sizeof(Dist) * n>>>(d_points_ptr, d_min_dists_ptr);
+
     fastjet<<<1, 1024, (sizeof(Dist) * n)>>>(d_jets_ptr, d_points_ptr,
-                                             d_min_dists_ptr, n);
+                                             d_dists_ptr, d_min_dists_ptr, n);
 
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
