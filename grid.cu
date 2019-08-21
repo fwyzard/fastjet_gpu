@@ -13,8 +13,8 @@ const double invR2 = 1.0 / R2;
 // const double MAX_DOUBLE = 1.79769e+308;
 const double ptmin = 5.0;
 const double dcut = ptmin * ptmin;
-const int grid_max_x = 51;
-const int grid_max_y = 11;
+const int grid_max_x = 50;
+const int grid_max_y = twopi / R;
 #pragma endregion
 
 #pragma region struct
@@ -417,8 +417,8 @@ int main() {
     set_points<<<1, 512>>>(d_jets_ptr, d_points_ptr, n, R);
 
     // create grid
-    set_grid<<<grid_max_x, grid_max_y>>>(d_grid_ptr, d_points_ptr, d_jets_ptr,
-                                         n);
+    set_grid<<<grid_max_x + 1, grid_max_y + 1>>>(d_grid_ptr, d_points_ptr,
+                                                 d_jets_ptr, n);
 
 // compute dist_min
 // for (int i = n; i > 246; i--) {
@@ -465,8 +465,8 @@ int main() {
     // for (int i = 0; i < n; i++)
     //   print_point(h_points[i]);
 
-    for (int i = 0; i < grid_max_x; i++)
-      for (int j = 0; j < grid_max_y; j++) {
+    for (int i = 0; i < grid_max_x + 1; i++)
+      for (int j = 0; j < grid_max_y + 1; j++) {
         cout << i << " " << j << ": ";
         for (int k = 0; k < n; k++) {
           int num =
