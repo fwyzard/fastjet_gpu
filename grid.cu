@@ -15,6 +15,7 @@ const double ptmin = 5.0;
 const double dcut = ptmin * ptmin;
 const int grid_max_x = 50;
 const int grid_max_y = twopi / R;
+const int eta_offsit = 25;
 #pragma endregion
 
 #pragma region struct
@@ -196,7 +197,7 @@ __global__ void set_points(PseudoJet *jets, EtaPhi *points, int n, float r) {
     return;
 
   EtaPhi p = _set_jet(jets[tid]);
-  p.box_i = p.eta / r + 25;
+  p.box_i = p.eta / r + eta_offsit;
   p.box_j = p.phi / r;
 
   points[tid] = p;
@@ -312,8 +313,8 @@ __global__ void reduce_recombine(int *grid, EtaPhi *points, PseudoJet *jets,
 
   Dist min = sdata[0];
   if (tid == 0) {
-    Dist d = yij_distance(points, 57, 61);
-    print_distance(d);
+    // Dist d = yij_distance(points, 57, 61);
+    // print_distance(d);
     print_distance(min);
     PseudoJet jet_i, jet_j;
 
@@ -354,7 +355,7 @@ __global__ void reduce_recombine(int *grid, EtaPhi *points, PseudoJet *jets,
       jet_i.E += jet_j.E;
       p2 = _set_jet(jet_i);
 
-      p2.box_i = p2.eta / r + 32;
+      p2.box_i = p2.eta / r + eta_offsit;
       p2.box_j = p2.phi / r;
 
       jet_i.index = min.i;
@@ -437,14 +438,14 @@ int main() {
     set_grid<<<grid_max_x + 1, grid_max_y + 1>>>(d_grid_ptr, d_points_ptr,
                                                  d_jets_ptr, n);
 
-// compute dist_min
-for (int i = n; i > 246; i--) {
-  compute_nn<<<1, n>>>(d_grid_ptr, d_points_ptr, d_jets_ptr,
-                       d_min_dists_ptr, i);
+    // compute dist_min
+    for (int i = n; i > 0; i--) {
+      compute_nn<<<1, n>>>(d_grid_ptr, d_points_ptr, d_jets_ptr,
+                           d_min_dists_ptr, i);
 
-  reduce_recombine<<<1, 512, sizeof(Dist) * n>>>(
-      d_grid_ptr, d_points_ptr, d_jets_ptr, d_min_dists_ptr, i, R);
-}
+      reduce_recombine<<<1, 512, sizeof(Dist) * n>>>(
+          d_grid_ptr, d_points_ptr, d_jets_ptr, d_min_dists_ptr, i, R);
+    }
 #pragma endregion
 
 #pragma region timing
