@@ -13,6 +13,8 @@ const double invR2 = 1.0 / R2;
 // const double MAX_DOUBLE = 1.79769e+308;
 const double ptmin = 5.0;
 const double dcut = ptmin * ptmin;
+const int grid_max_x = 51;
+const int grid_max_y = 11;
 #pragma endregion
 
 #pragma region struct
@@ -127,7 +129,7 @@ __device__ Dist yij_distance(EtaPhi *points, int i, int j) {
 __device__ Dist minimum_in_cell(int *grid, EtaPhi *points, PseudoJet *jets,
                                 Dist min, int tid, int i, int j) {
   int k = 0;
-  int num = grid[(i * 64 * 64) + (j * 64) + k];
+  int num = grid[(i * grid_max_x * grid_max_y) + (j * grid_max_y) + k];
 
   // PseudoJet jet1 = jets[tid];
   // PseudoJet jet2;
@@ -141,7 +143,7 @@ __device__ Dist minimum_in_cell(int *grid, EtaPhi *points, PseudoJet *jets,
     }
 
     k++;
-    num = grid[(i * 64 * 64) + (j * 64) + k];
+    num = grid[(i * grid_max_x * grid_max_y) + (j * grid_max_y) + k];
   }
 
   return min;
@@ -150,7 +152,7 @@ __device__ Dist minimum_in_cell(int *grid, EtaPhi *points, PseudoJet *jets,
 __device__ void remove_from_grid(int *grid, PseudoJet &jet, EtaPhi &p) {
   // Remove from grid
   int k = 0;
-  int offset = (p.box_i * 64 * 64) + (p.box_j * 64);
+  int offset = (p.box_i * grid_max_x * grid_max_y) + (p.box_j * grid_max_y);
   int num = grid[offset + k];
   bool shift = false;
 
@@ -171,7 +173,7 @@ __device__ void remove_from_grid(int *grid, PseudoJet &jet, EtaPhi &p) {
 __device__ void add_to_grid(int *grid, PseudoJet &jet, EtaPhi &p) {
   // Remove from grid
   int k = 0;
-  int offset = (p.box_i * 64 * 64) + (p.box_j * 64);
+  int offset = (p.box_i * grid_max_x * grid_max_y) + (p.box_j * grid_max_y);
   int num = grid[offset + k];
 
   while (true) {
@@ -194,7 +196,7 @@ __global__ void set_points(PseudoJet *jets, EtaPhi *points, int n, float r) {
     return;
 
   EtaPhi p = _set_jet(jets[tid]);
-  p.box_i = p.eta / r + 32;
+  p.box_i = p.eta / r + 25;
   p.box_j = p.phi / r;
 
   points[tid] = p;
@@ -217,7 +219,8 @@ __global__ void set_grid(int *grid, EtaPhi *points, PseudoJet *jets, int n) {
     p = points[i];
 
     if (p.box_i == bid && p.box_j == tid) {
-      grid[(bid * 64 * 64) + (tid * 64) + k] = jets[i].index;
+      grid[(bid * grid_max_x * grid_max_y) + (tid * grid_max_y) + k] =
+          jets[i].index;
       // printf("%4d%4d%4d\n", bid, tid, grid[bid * 64 + tid * 64 + k]);
       k++;
     }
@@ -225,7 +228,7 @@ __global__ void set_grid(int *grid, EtaPhi *points, PseudoJet *jets, int n) {
 
   // if (bid)
 
-  grid[(bid * 64 * 64) + (tid * 64) + k] = -1;
+  grid[(bid * grid_max_x * grid_max_y) + (tid * grid_max_y) + k] = -1;
   // printf("-1\n");
 }
 
@@ -241,14 +244,18 @@ __global__ void compute_nn(int *grid, EtaPhi *points, PseudoJet *jets,
   min = yij_distance(points, tid, tid);
 
   min = minimum_in_cell(grid, points, jets, min, tid, p.box_i, p.box_j);
-  min = minimum_in_cell(grid, points, jets, min, tid, p.box_i, p.box_j - 1);
-  min = minimum_in_cell(grid, points, jets, min, tid, p.box_i, p.box_j + 1);
-  min = minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1, p.box_j);
-  min = minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1, p.box_j - 1);
-  min = minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1, p.box_j + 1);
   min = minimum_in_cell(grid, points, jets, min, tid, p.box_i + 1, p.box_j);
-  min = minimum_in_cell(grid, points, jets, min, tid, p.box_i + 1, p.box_j - 1);
+  min = minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1, p.box_j);
+
+  // check if above grid_max_y
+  min = minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1, p.box_j + 1);
+  min = minimum_in_cell(grid, points, jets, min, tid, p.box_i, p.box_j + 1);
   min = minimum_in_cell(grid, points, jets, min, tid, p.box_i + 1, p.box_j + 1);
+
+  // check if above grid_max_x
+  min = minimum_in_cell(grid, points, jets, min, tid, p.box_i, p.box_j - 1);
+  min = minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1, p.box_j - 1);
+  min = minimum_in_cell(grid, points, jets, min, tid, p.box_i + 1, p.box_j - 1);
 
   int t;
   if (min.i > min.j) {
@@ -391,7 +398,7 @@ int main() {
     thrust::device_vector<EtaPhi> d_points(n);
     EtaPhi *d_points_ptr = thrust::raw_pointer_cast(d_points.data());
 
-    thrust::device_vector<int> d_grid(n * 64 * 64);
+    thrust::device_vector<int> d_grid(n * grid_max_x * grid_max_y);
     int *d_grid_ptr = thrust::raw_pointer_cast(d_grid.data());
 
     thrust::device_vector<Dist> d_min_dists(n);
@@ -410,16 +417,17 @@ int main() {
     set_points<<<1, 512>>>(d_jets_ptr, d_points_ptr, n, R);
 
     // create grid
-    set_grid<<<64, 64>>>(d_grid_ptr, d_points_ptr, d_jets_ptr, n);
+    set_grid<<<grid_max_x, grid_max_y>>>(d_grid_ptr, d_points_ptr, d_jets_ptr,
+                                         n);
 
-    // compute dist_min
-    for (int i = n; i > 246; i--) {
-      compute_nn<<<1, n>>>(d_grid_ptr, d_points_ptr, d_jets_ptr,
-                           d_min_dists_ptr, i);
+// compute dist_min
+// for (int i = n; i > 246; i--) {
+//   compute_nn<<<1, n>>>(d_grid_ptr, d_points_ptr, d_jets_ptr,
+//                        d_min_dists_ptr, i);
 
-      reduce_recombine<<<1, 512, sizeof(Dist) * n>>>(
-          d_grid_ptr, d_points_ptr, d_jets_ptr, d_min_dists_ptr, i, R);
-    }
+//   reduce_recombine<<<1, 512, sizeof(Dist) * n>>>(
+//       d_grid_ptr, d_points_ptr, d_jets_ptr, d_min_dists_ptr, i, R);
+// }
 #pragma endregion
 
 #pragma region timing
@@ -457,14 +465,16 @@ int main() {
     // for (int i = 0; i < n; i++)
     //   print_point(h_points[i]);
 
-    for (int i = 0; i < 64; i++)
-      for (int j = 0; j < 64; j++) {
+    for (int i = 0; i < grid_max_x; i++)
+      for (int j = 0; j < grid_max_y; j++) {
         cout << i << " " << j << ": ";
         for (int k = 0; k < n; k++) {
-          int num = h_grid[(i * 64 * 64) + (j * 64) + k];
+          int num =
+              h_grid[(i * grid_max_x * grid_max_y) + (j * grid_max_y) + k];
           if (num == -1)
             break;
-          cout << h_grid[(i * 64 * 64) + (j * 64) + k] << " ";
+          cout << h_grid[(i * grid_max_x * grid_max_y) + (j * grid_max_y) + k]
+               << " ";
         }
         cout << -1 << endl;
       }
