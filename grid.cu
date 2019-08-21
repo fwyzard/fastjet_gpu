@@ -244,18 +244,35 @@ __global__ void compute_nn(int *grid, EtaPhi *points, PseudoJet *jets,
   min = yij_distance(points, tid, tid);
 
   min = minimum_in_cell(grid, points, jets, min, tid, p.box_i, p.box_j);
-  min = minimum_in_cell(grid, points, jets, min, tid, p.box_i + 1, p.box_j);
-  min = minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1, p.box_j);
+  if (p.box_i + 1 < grid_max_x + 1)
+    min = minimum_in_cell(grid, points, jets, min, tid, p.box_i + 1, p.box_j);
+  if (p.box_i - 1 >= 0)
+    min = minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1, p.box_j);
 
   // check if above grid_max_y
-  min = minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1, p.box_j + 1);
-  min = minimum_in_cell(grid, points, jets, min, tid, p.box_i, p.box_j + 1);
-  min = minimum_in_cell(grid, points, jets, min, tid, p.box_i + 1, p.box_j + 1);
+  int j = p.box_j + 1 <= grid_max_y ? p.box_j + 1 : 0;
 
-  // check if above grid_max_x
-  min = minimum_in_cell(grid, points, jets, min, tid, p.box_i, p.box_j - 1);
-  min = minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1, p.box_j - 1);
-  min = minimum_in_cell(grid, points, jets, min, tid, p.box_i + 1, p.box_j - 1);
+  min = minimum_in_cell(grid, points, jets, min, tid, p.box_i, j);
+  if (p.box_i + 1 < grid_max_x + 1)
+    min = minimum_in_cell(grid, points, jets, min, tid, p.box_i + 1, j);
+  if (p.box_i - 1 >= 0)
+    min = minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1, j);
+
+  // check if bellow 0
+  j = p.box_j - 1 >= 0 ? p.box_j - 1 : grid_max_y;
+  min = minimum_in_cell(grid, points, jets, min, tid, p.box_i, j);
+  if (p.box_i + 1 < grid_max_x + 1)
+    min = minimum_in_cell(grid, points, jets, min, tid, p.box_i + 1, j);
+  if (p.box_i - 1 >= 0)
+    min = minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1, j);
+
+  if (p.box_j - 1 < 0) {
+    min = minimum_in_cell(grid, points, jets, min, tid, p.box_i, j - 1);
+    if (p.box_i + 1 < grid_max_x + 1)
+      min = minimum_in_cell(grid, points, jets, min, tid, p.box_i + 1, j - 1);
+    if (p.box_i - 1 >= 0)
+      min = minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1, j - 1);
+  }
 
   int t;
   if (min.i > min.j) {
@@ -421,13 +438,13 @@ int main() {
                                                  d_jets_ptr, n);
 
 // compute dist_min
-// for (int i = n; i > 246; i--) {
-//   compute_nn<<<1, n>>>(d_grid_ptr, d_points_ptr, d_jets_ptr,
-//                        d_min_dists_ptr, i);
+for (int i = n; i > 246; i--) {
+  compute_nn<<<1, n>>>(d_grid_ptr, d_points_ptr, d_jets_ptr,
+                       d_min_dists_ptr, i);
 
-//   reduce_recombine<<<1, 512, sizeof(Dist) * n>>>(
-//       d_grid_ptr, d_points_ptr, d_jets_ptr, d_min_dists_ptr, i, R);
-// }
+  reduce_recombine<<<1, 512, sizeof(Dist) * n>>>(
+      d_grid_ptr, d_points_ptr, d_jets_ptr, d_min_dists_ptr, i, R);
+}
 #pragma endregion
 
 #pragma region timing
