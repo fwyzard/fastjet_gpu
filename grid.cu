@@ -130,7 +130,7 @@ __device__ Dist yij_distance(EtaPhi *points, int i, int j) {
 __device__ Dist minimum_in_cell(int *grid, EtaPhi *points, PseudoJet *jets,
                                 Dist min, int tid, int i, int j) {
   int k = 0;
-  int num = grid[(i * grid_max_x * grid_max_y) + (j * grid_max_y) + k];
+  int num = grid[(i * grid_max_x * grid_max_y) + (j * grid_max_x) + k];
 
   // PseudoJet jet1 = jets[tid];
   // PseudoJet jet2;
@@ -144,7 +144,7 @@ __device__ Dist minimum_in_cell(int *grid, EtaPhi *points, PseudoJet *jets,
     }
 
     k++;
-    num = grid[(i * grid_max_x * grid_max_y) + (j * grid_max_y) + k];
+    num = grid[(i * grid_max_x * grid_max_y) + (j * grid_max_x) + k];
   }
 
   return min;
@@ -153,14 +153,17 @@ __device__ Dist minimum_in_cell(int *grid, EtaPhi *points, PseudoJet *jets,
 __device__ void remove_from_grid(int *grid, PseudoJet &jet, EtaPhi &p) {
   // Remove from grid
   int k = 0;
-  int offset = (p.box_i * grid_max_x * grid_max_y) + (p.box_j * grid_max_y);
+  int offset = (p.box_i * grid_max_x * grid_max_y) + (p.box_j * grid_max_x);
   int num = grid[offset + k];
   bool shift = false;
 
+  // if (jet.index == 212)
+  //   print_point(p);
   while (num != -1) {
     if (jet.index == num)
       shift = true;
-
+    // if (jet.index == 212)
+    //   printf("%d\n", num);
     if (shift) {
       grid[offset + k] = grid[offset + k + 1];
       // k--;
@@ -174,9 +177,11 @@ __device__ void remove_from_grid(int *grid, PseudoJet &jet, EtaPhi &p) {
 __device__ void add_to_grid(int *grid, PseudoJet &jet, EtaPhi &p) {
   // Remove from grid
   int k = 0;
-  int offset = (p.box_i * grid_max_x * grid_max_y) + (p.box_j * grid_max_y);
+  int offset = (p.box_i * grid_max_x * grid_max_y) + (p.box_j * grid_max_x);
   int num = grid[offset + k];
 
+  // if (jet.index == 212)
+  //   print_point(p);
   while (true) {
     num = grid[offset + k];
     if (num == -1) {
@@ -220,7 +225,7 @@ __global__ void set_grid(int *grid, EtaPhi *points, PseudoJet *jets, int n) {
     p = points[i];
 
     if (p.box_i == bid && p.box_j == tid) {
-      grid[(bid * grid_max_x * grid_max_y) + (tid * grid_max_y) + k] =
+      grid[(bid * grid_max_x * grid_max_y) + (tid * grid_max_x) + k] =
           jets[i].index;
       // printf("%4d%4d%4d\n", bid, tid, grid[bid * 64 + tid * 64 + k]);
       k++;
@@ -229,7 +234,7 @@ __global__ void set_grid(int *grid, EtaPhi *points, PseudoJet *jets, int n) {
 
   // if (bid)
 
-  grid[(bid * grid_max_x * grid_max_y) + (tid * grid_max_y) + k] = -1;
+  grid[(bid * grid_max_x * grid_max_y) + (tid * grid_max_x) + k] = -1;
   // printf("-1\n");
 }
 
@@ -244,35 +249,69 @@ __global__ void compute_nn(int *grid, EtaPhi *points, PseudoJet *jets,
   Dist min;
   min = yij_distance(points, tid, tid);
 
-  min = minimum_in_cell(grid, points, jets, min, tid, p.box_i, p.box_j);
-  if (p.box_i + 1 < grid_max_x + 1)
-    min = minimum_in_cell(grid, points, jets, min, tid, p.box_i + 1, p.box_j);
-  if (p.box_i - 1 >= 0)
-    min = minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1, p.box_j);
+  // if (tid == 186 && n == 212)
+  //   print_distance(min);
 
+  min = minimum_in_cell(grid, points, jets, min, tid, p.box_i, p.box_j);
+  // if (tid == 186 && n == 212)
+  //   print_distance(min);
+  if (p.box_i + 1 < grid_max_x + 1) {
+    min = minimum_in_cell(grid, points, jets, min, tid, p.box_i + 1, p.box_j);
+    // if (tid == 186 && n == 212)
+    //   print_distance(min);
+  }
+  if (p.box_i - 1 >= 0) {
+    min = minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1, p.box_j);
+    // if (tid == 186 && n == 212)
+    //   print_distance(min);
+  }
   // check if above grid_max_y
   int j = p.box_j + 1 <= grid_max_y ? p.box_j + 1 : 0;
 
   min = minimum_in_cell(grid, points, jets, min, tid, p.box_i, j);
-  if (p.box_i + 1 < grid_max_x + 1)
+  // if (tid == 186 && n == 212)
+  //   print_distance(min);
+  if (p.box_i + 1 < grid_max_x + 1) {
     min = minimum_in_cell(grid, points, jets, min, tid, p.box_i + 1, j);
-  if (p.box_i - 1 >= 0)
+    // if (tid == 186 && n == 212)
+    //   print_distance(min);
+  }
+  if (p.box_i - 1 >= 0) {
     min = minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1, j);
+    // if (tid == 186 && n == 212)
+    //   print_distance(min);
+  }
 
   // check if bellow 0
   j = p.box_j - 1 >= 0 ? p.box_j - 1 : grid_max_y;
   min = minimum_in_cell(grid, points, jets, min, tid, p.box_i, j);
-  if (p.box_i + 1 < grid_max_x + 1)
+  // if (tid == 186 && n == 212)
+  //   print_distance(min);
+  if (p.box_i + 1 < grid_max_x + 1) {
     min = minimum_in_cell(grid, points, jets, min, tid, p.box_i + 1, j);
-  if (p.box_i - 1 >= 0)
+    // if (tid == 186 && n == 212)
+    //   print_distance(min);
+  }
+  if (p.box_i - 1 >= 0) {
     min = minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1, j);
+    // if (tid == 186 && n == 212)
+    //   print_distance(min);
+  }
 
   if (p.box_j - 1 < 0) {
     min = minimum_in_cell(grid, points, jets, min, tid, p.box_i, j - 1);
-    if (p.box_i + 1 < grid_max_x + 1)
+    // if (tid == 186 && n == 212)
+    //   print_distance(min);
+    if (p.box_i + 1 < grid_max_x + 1) {
       min = minimum_in_cell(grid, points, jets, min, tid, p.box_i + 1, j - 1);
-    if (p.box_i - 1 >= 0)
+      // if (tid == 186 && n == 212)
+      //   print_distance(min);
+    }
+    if (p.box_i - 1 >= 0) {
       min = minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1, j - 1);
+      // if (tid == 186 && n == 212)
+      //   print_distance(min);
+    }
   }
 
   int t;
@@ -323,7 +362,8 @@ __global__ void reduce_recombine(int *grid, EtaPhi *points, PseudoJet *jets,
       jet_j = jets[min.j];
       p1 = points[min.j];
       remove_from_grid(grid, jet_j, p1);
-      remove_from_grid(grid, jets[n - 1], points[n - 1]);
+      if (min.j != n - 1)
+        remove_from_grid(grid, jets[n - 1], points[n - 1]);
 
       jets[min.j] = jets[n - 1];
       points[min.j] = points[n - 1];
@@ -335,7 +375,8 @@ __global__ void reduce_recombine(int *grid, EtaPhi *points, PseudoJet *jets,
       jets[n - 1] = jet_j;
       points[n - 1] = p1;
 
-      add_to_grid(grid, jets[min.j], points[min.j]);
+      if (min.j != n - 1)
+        add_to_grid(grid, jets[min.j], points[min.j]);
 
     } else {
       jet_i = jets[min.i];
@@ -344,10 +385,13 @@ __global__ void reduce_recombine(int *grid, EtaPhi *points, PseudoJet *jets,
       jet_j = jets[min.j];
       // p2 = points[min.j];
 
+      print_point(points[287]);
       remove_from_grid(grid, jet_i, points[min.i]);
       remove_from_grid(grid, jet_j, points[min.j]);
-      if (min.j != n - 1)
+      if (min.j != n - 1) {
+        printf("removing: %4d\n", n - 1);
         remove_from_grid(grid, jets[n - 1], points[n - 1]);
+      }
 
       jet_i.px += jet_j.px;
       jet_i.py += jet_j.py;
@@ -439,7 +483,7 @@ int main() {
                                                  d_jets_ptr, n);
 
     // compute dist_min
-    for (int i = n; i > 0; i--) {
+    for (int i = n; i > 350; i--) {
       compute_nn<<<1, n>>>(d_grid_ptr, d_points_ptr, d_jets_ptr,
                            d_min_dists_ptr, i);
 
@@ -488,10 +532,10 @@ int main() {
         cout << i << " " << j << ": ";
         for (int k = 0; k < n; k++) {
           int num =
-              h_grid[(i * grid_max_x * grid_max_y) + (j * grid_max_y) + k];
+              h_grid[(i * grid_max_x * grid_max_y) + (j * grid_max_x) + k];
           if (num == -1)
             break;
-          cout << h_grid[(i * grid_max_x * grid_max_y) + (j * grid_max_y) + k]
+          cout << h_grid[(i * grid_max_x * grid_max_y) + (j * grid_max_x) + k]
                << " ";
         }
         cout << -1 << endl;
