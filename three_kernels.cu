@@ -165,11 +165,50 @@ __global__ void set_distances(PseudoJet *jets, double *distances, int *indices,
 }
 
 __global__ void recalculate_distances(PseudoJet *jets, double *distances,
-                                      int *indices, int *indices_ii,
-                                      int *indices_jj, int const n) {
+                                      double *distances_out, int *indices,
+                                      int *indices_ii, int *indices_jj,
+                                      int const n) {
   int tid = blockDim.x * blockIdx.x + threadIdx.x;
   int i, j;
   int index = indices[0];
+
+  if (tid == 0) {
+    double min = distances_out[0];
+    int min_tid = indices[0];
+    for (int i = 1; i < gridDim.x; i++) {
+      if (distances_out[i] < min) {
+        min = distances_out[i];
+        min_tid = indices[i];
+      }
+    }
+
+    distances_out[0] = min;
+    indices[0] = min_tid;
+
+    int i, j;
+    // tid_to_ij(i, j, min_tid);
+    i = indices_ii[min_tid];
+    j = indices_jj[min_tid];
+
+    if (i == j) {
+      PseudoJet temp;
+      temp = jets[j];
+      jets[j] = jets[n];
+      temp.isJet = true;
+      jets[n] = temp;
+    } else {
+      jets[i].px += jets[j].px;
+      jets[i].py += jets[j].py;
+      jets[i].pz += jets[j].pz;
+      jets[i].E += jets[j].E;
+      _set_jet(jets[i]);
+
+      jets[j] = jets[n];
+    }
+  }
+
+  __syncthreads();
+
   // tid_to_ij(i, j, index);
   i = indices_ii[index];
   j = indices_jj[index];
@@ -270,8 +309,6 @@ __global__ void reduction_min_second(PseudoJet *jets, double *distances,
   int jj;
   for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {
     if (i < s && (tid + s) < distances_array_size) {
-      // tid_to_ij(ii, jj, s_indices[i + s]);
-      // ii = indices_ii[s_indices[i + s]];
       jj = indices_jj[s_indices[i + s]];
       if (s_distances[i] > s_distances[i + s] && jj < num_particles) {
         s_distances[i] = s_distances[i + s];
@@ -410,13 +447,14 @@ int main() {
           d_jets, d_distances, d_out, d_indices, d_indices_ii, d_indices_jj,
           num_threads, n);
 
-      reduction_min_second<<<1, num_blocks, num_blocks * sizeof(double) +
-                                                num_blocks * sizeof(int)>>>(
-          d_jets, d_out, d_out, d_indices, d_indices_ii, d_indices_jj,
-          num_blocks, n);
+      // reduction_min_second<<<1, num_blocks, num_blocks * sizeof(double) +
+      //                                           num_blocks * sizeof(int)>>>(
+      //     d_jets, d_out, d_out, d_indices, d_indices_ii, d_indices_jj,
+      //     num_blocks, n);
 
       recalculate_distances<<<(NUM_PARTICLES / 1024) + 1, 1024>>>(
-          d_jets, d_distances, d_indices, d_indices_ii, d_indices_jj, n - 1);
+          d_jets, d_distances, d_out, d_indices, d_indices_ii, d_indices_jj,
+          n - 1);
     }
 
     cudaEventRecord(stop);
