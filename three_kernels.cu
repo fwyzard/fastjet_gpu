@@ -355,7 +355,7 @@ int main() {
   printf("Device Name: %s\n", prop.name);
 
   int NUM_PARTICLES = 0;
-  int NUM_EVENTS = 9;
+  int NUM_EVENTS = 1;
 
   for (int event = 0; event < NUM_EVENTS; event++) {
     PseudoJet *h_jets = NULL;
@@ -429,35 +429,45 @@ int main() {
     double *d_out = 0;
     cudaMalloc((void **)&d_out, num_blocks * sizeof(double));
 
-    cudaEventRecord(start);
-    set_jets<<<num_blocks, num_threads>>>(d_jets);
+    float acc_time = 0;
+    float milliseconds = 0;
+    for (int s = 0; s < 1000; s++) {
+      cudaEventRecord(start);
+      set_jets<<<num_blocks, num_threads>>>(d_jets);
 
-    num_threads = (NUM_PARTICLES * (NUM_PARTICLES + 1) / 2);
-    num_blocks = (num_threads / 1024) + 1;
-    set_distances<<<num_blocks, 1024>>>(d_jets, d_distances, d_indices,
-                                        d_indices_ii, d_indices_jj,
-                                        NUM_PARTICLES);
-
-    for (int n = NUM_PARTICLES; n > 0; n--) {
-      num_threads = (n * (n + 1) / 2);
+      num_threads = (NUM_PARTICLES * (NUM_PARTICLES + 1) / 2);
       num_blocks = (num_threads / 1024) + 1;
+      set_distances<<<num_blocks, 1024>>>(d_jets, d_distances, d_indices,
+                                          d_indices_ii, d_indices_jj,
+                                          NUM_PARTICLES);
 
-      reduction_min_first<<<num_blocks, 1024,
-                            1024 * sizeof(double) + 1024 * sizeof(int)>>>(
-          d_jets, d_distances, d_out, d_indices, d_indices_ii, d_indices_jj,
-          num_threads, n);
+      for (int n = NUM_PARTICLES; n > 0; n--) {
+        num_threads = (n * (n + 1) / 2);
+        num_blocks = (num_threads / 1024) + 1;
 
-      // reduction_min_second<<<1, num_blocks, num_blocks * sizeof(double) +
-      //                                           num_blocks * sizeof(int)>>>(
-      //     d_jets, d_out, d_out, d_indices, d_indices_ii, d_indices_jj,
-      //     num_blocks, n);
+        reduction_min_first<<<num_blocks, 1024,
+                              1024 * sizeof(double) + 1024 * sizeof(int)>>>(
+            d_jets, d_distances, d_out, d_indices, d_indices_ii, d_indices_jj,
+            num_threads, n);
 
-      recalculate_distances<<<(NUM_PARTICLES / 1024) + 1, 1024>>>(
-          d_jets, d_distances, d_out, d_indices, d_indices_ii, d_indices_jj,
-          n - 1);
+        // reduction_min_second<<<1, num_blocks, num_blocks * sizeof(double) +
+        //                                           num_blocks *
+        //                                           sizeof(int)>>>(
+        //     d_jets, d_out, d_out, d_indices, d_indices_ii, d_indices_jj,
+        //     num_blocks, n);
+
+        recalculate_distances<<<(NUM_PARTICLES / 1024) + 1, 1024>>>(
+            d_jets, d_distances, d_out, d_indices, d_indices_ii, d_indices_jj,
+            n - 1);
+      }
+      cudaEventRecord(stop);
+      cudaEventSynchronize(stop);
+
+      cudaEventElapsedTime(&milliseconds, start, stop);
+      printf("run %d\t%.3fms\n", s, milliseconds);
+      acc_time += milliseconds;
     }
 
-    cudaEventRecord(stop);
     cudaMemcpy(h_jets, d_jets, NUM_PARTICLES * sizeof(PseudoJet),
                cudaMemcpyDeviceToHost);
 
@@ -472,10 +482,10 @@ int main() {
     // // Check for any CUDA errors
     // checkCUDAError("cudaMemcpy calls");
 
-    cudaEventSynchronize(stop);
-    float milliseconds = 0;
-    cudaEventElapsedTime(&milliseconds, start, stop);
-    printf("%d\t%.3fms\n", NUM_PARTICLES, milliseconds);
+    // cudaEventSynchronize(stop);
+    // float milliseconds = 0;
+    // cudaEventElapsedTime(&milliseconds, start, stop);
+    printf("avg %d\t%.3fms\n", NUM_PARTICLES, acc_time / 1000.0f);
 
     // for (int i = 0; i < NUM_PARTICLES; i++)
     //   if (h_jets[i].diB >= dcut && h_jets[i].isJet)
