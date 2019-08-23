@@ -2,7 +2,9 @@
 #include <cmath>
 #include <iostream>
 #include <limits>
+#include <numeric>
 #include <stdio.h>
+#include <vector>
 
 // Here you can set the device ID that was assigned to you
 #define MYDEVICE 0
@@ -429,8 +431,8 @@ int main() {
     double *d_out = 0;
     cudaMalloc((void **)&d_out, num_blocks * sizeof(double));
 
-    float acc_time = 0;
-    float milliseconds = 0;
+    vector<double> acc;
+    float milliseconds;
     for (int s = 0; s < 1000; s++) {
       cudaEventRecord(start);
       set_jets<<<num_blocks, num_threads>>>(d_jets);
@@ -465,7 +467,7 @@ int main() {
 
       cudaEventElapsedTime(&milliseconds, start, stop);
       printf("run %d\t%.3fms\n", s, milliseconds);
-      acc_time += milliseconds;
+      acc.push_back(milliseconds);
     }
 
     cudaMemcpy(h_jets, d_jets, NUM_PARTICLES * sizeof(PseudoJet),
@@ -485,7 +487,15 @@ int main() {
     // cudaEventSynchronize(stop);
     // float milliseconds = 0;
     // cudaEventElapsedTime(&milliseconds, start, stop);
-    printf("avg %d\t%.3fms\n", NUM_PARTICLES, acc_time / 1000.0f);
+    double sum = std::accumulate(acc.begin(), acc.end(), 0.0);
+    double mean = sum / acc.size();
+
+    double sq_sum =
+        std::inner_product(acc.begin(), acc.end(), acc.begin(), 0.0);
+    double stdev = std::sqrt(sq_sum / acc.size() - mean * mean);
+    printf("n =  %d\n", NUM_PARTICLES);
+    printf("mean %.3fms\n", mean);
+    printf("std %.3fms\n", stdev);
 
     // for (int i = 0; i < NUM_PARTICLES; i++)
     //   if (h_jets[i].diB >= dcut && h_jets[i].isJet)
