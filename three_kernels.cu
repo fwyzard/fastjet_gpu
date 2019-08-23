@@ -392,8 +392,8 @@ int main() {
     double *d_out = 0;
     cudaMalloc((void **)&d_out, num_blocks * sizeof(double));
 
-    float acc_time = 0;
-    float milliseconds = 0;
+    vector<double> acc;
+    float milliseconds;
     for (int s = 0; s < 1000; s++) {
       cudaEventRecord(start);
 
@@ -427,7 +427,7 @@ int main() {
       cudaEventSynchronize(stop);
       cudaEventElapsedTime(&milliseconds, start, stop);
       printf("run %d\t%.3fms\n", s, milliseconds);
-      acc_time += milliseconds;
+      acc.push_back(milliseconds);
     }
     cudaMemcpy(h_jets, d_jets, NUM_PARTICLES * sizeof(PseudoJet),
                cudaMemcpyDeviceToHost);
@@ -442,12 +442,18 @@ int main() {
 
     // // Check for any CUDA errors
     // checkCUDAError("cudaMemcpy calls");
-// 
+    //
     // cudaEventSynchronize(stop);
 
-    cudaEventElapsedTime(&milliseconds, start, stop);
-    // printf("total time%d\t%.3fms\n", NUM_PARTICLES, milliseconds);
-    printf("avg time%d\t%.3fms\n", NUM_PARTICLES, acc_time / 1000.0f);
+    double sum = std::accumulate(acc.begin(), acc.end(), 0.0);
+    double mean = sum / acc.size();
+
+    double sq_sum =
+        std::inner_product(acc.begin(), acc.end(), acc.begin(), 0.0);
+    double stdev = std::sqrt(sq_sum / acc.size() - mean * mean);
+    printf("n =  %d\n", NUM_PARTICLES);
+    printf("mean %.3fms\n", mean);
+    printf("std %.3fms\n", stdev);
 
     // for (int i = 0; i < NUM_PARTICLES; i++)
     //   if (h_jets[i].diB >= dcut && h_jets[i].isJet)
