@@ -3,7 +3,8 @@
 #include <iostream>
 #include <limits>
 #include <stdio.h>
-
+#include <vector>
+#include <numeric>
 // Here you can set the device ID that was assigned to you
 #define MYDEVICE 0
 
