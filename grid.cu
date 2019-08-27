@@ -270,6 +270,8 @@ __global__ void reduce_recombine(int *grid, EtaPhi *points, PseudoJet *jets,
   if (tid >= n)
     return;
 
+  min_dists[tid].i = -1;
+
   while (n > 0) {
 
     EtaPhi p = points[tid];
