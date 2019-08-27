@@ -270,89 +270,101 @@ __global__ void reduce_recombine(int *grid, EtaPhi *points, PseudoJet *jets,
   if (tid >= n)
     return;
 
-  min_dists[tid].i = -1;
-
+  min_dists[tid].i = -3;
+  min_dists[tid].j = -1;
+  Dist min;
+  min.i = -4;
+  min.j = -4;
   while (n > 0) {
 
+    if (tid >= n)
+      return;
+
     EtaPhi p = points[tid];
-    Dist min;
-    min = yij_distance(points, tid, tid);
+    Dist local_min = min_dists[tid];
+    if (local_min.i == -3 || local_min.j == min.i || local_min.j == min.j ||
+        local_min.i == min.i || local_min.i == min.j || local_min.i >= n ||
+        local_min.j >= n) {
+      // print_distance(min_dists[tid]);
 
-    min = minimum_in_cell(grid, points, jets, min, tid, p.box_i, p.box_j, N);
-    // if (tid == 186 && n == 212)
-    //   print_distance(min);
-    if (p.box_i + 1 < grid_max_x + 1) {
-      min = minimum_in_cell(grid, points, jets, min, tid, p.box_i + 1, p.box_j,
-                            N);
-      // if (tid == 186 && n == 212)
-      //   print_distance(min);
-    }
-    if (p.box_i - 1 >= 0) {
-      min = minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1, p.box_j,
-                            N);
-      // if (tid == 186 && n == 212)
-      //   print_distance(min);
-    }
-    // check if above grid_max_y
-    int j = p.box_j + 1 <= grid_max_y ? p.box_j + 1 : 0;
+      min = yij_distance(points, tid, tid);
 
-    min = minimum_in_cell(grid, points, jets, min, tid, p.box_i, j, N);
-    // if (tid == 186 && n == 212)
-    //   print_distance(min);
-    if (p.box_i + 1 < grid_max_x + 1) {
-      min = minimum_in_cell(grid, points, jets, min, tid, p.box_i + 1, j, N);
-      // if (tid == 186 && n == 212)
-      //   print_distance(min);
-    }
-    if (p.box_i - 1 >= 0) {
-      min = minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1, j, N);
-      // if (tid == 186 && n == 212)
-      //   print_distance(min);
-    }
-
-    // check if bellow 0
-    j = p.box_j - 1 >= 0 ? p.box_j - 1 : grid_max_y - 1;
-    min = minimum_in_cell(grid, points, jets, min, tid, p.box_i, j, N);
-    // if (tid == 186 && n == 212)
-    //   print_distance(min);
-    if (p.box_i + 1 < grid_max_x + 1) {
-      min = minimum_in_cell(grid, points, jets, min, tid, p.box_i + 1, j, N);
-      // if (tid == 186 && n == 212)
-      //   print_distance(min);
-    }
-    if (p.box_i - 1 >= 0) {
-      min = minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1, j, N);
-      // if (tid == 186 && n == 212)
-      //   print_distance(min);
-    }
-
-    if (p.box_j - 1 < 0) {
-      min = minimum_in_cell(grid, points, jets, min, tid, p.box_i, j - 1, N);
+      min = minimum_in_cell(grid, points, jets, min, tid, p.box_i, p.box_j, N);
       // if (tid == 186 && n == 212)
       //   print_distance(min);
       if (p.box_i + 1 < grid_max_x + 1) {
-        min = minimum_in_cell(grid, points, jets, min, tid, p.box_i + 1, j - 1,
-                              N);
+        min = minimum_in_cell(grid, points, jets, min, tid, p.box_i + 1,
+                              p.box_j, N);
         // if (tid == 186 && n == 212)
         //   print_distance(min);
       }
       if (p.box_i - 1 >= 0) {
-        min = minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1, j - 1,
-                              N);
+        min = minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1,
+                              p.box_j, N);
         // if (tid == 186 && n == 212)
         //   print_distance(min);
       }
+      // check if above grid_max_y
+      int j = p.box_j + 1 <= grid_max_y ? p.box_j + 1 : 0;
+
+      min = minimum_in_cell(grid, points, jets, min, tid, p.box_i, j, N);
+      // if (tid == 186 && n == 212)
+      //   print_distance(min);
+      if (p.box_i + 1 < grid_max_x + 1) {
+        min = minimum_in_cell(grid, points, jets, min, tid, p.box_i + 1, j, N);
+        // if (tid == 186 && n == 212)
+        //   print_distance(min);
+      }
+      if (p.box_i - 1 >= 0) {
+        min = minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1, j, N);
+        // if (tid == 186 && n == 212)
+        //   print_distance(min);
+      }
+
+      // check if bellow 0
+      j = p.box_j - 1 >= 0 ? p.box_j - 1 : grid_max_y - 1;
+      min = minimum_in_cell(grid, points, jets, min, tid, p.box_i, j, N);
+      // if (tid == 186 && n == 212)
+      //   print_distance(min);
+      if (p.box_i + 1 < grid_max_x + 1) {
+        min = minimum_in_cell(grid, points, jets, min, tid, p.box_i + 1, j, N);
+        // if (tid == 186 && n == 212)
+        //   print_distance(min);
+      }
+      if (p.box_i - 1 >= 0) {
+        min = minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1, j, N);
+        // if (tid == 186 && n == 212)
+        //   print_distance(min);
+      }
+
+      if (p.box_j - 1 < 0) {
+        min = minimum_in_cell(grid, points, jets, min, tid, p.box_i, j - 1, N);
+        // if (tid == 186 && n == 212)
+        //   print_distance(min);
+        if (p.box_i + 1 < grid_max_x + 1) {
+          min = minimum_in_cell(grid, points, jets, min, tid, p.box_i + 1,
+                                j - 1, N);
+          // if (tid == 186 && n == 212)
+          //   print_distance(min);
+        }
+        if (p.box_i - 1 >= 0) {
+          min = minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1,
+                                j - 1, N);
+          // if (tid == 186 && n == 212)
+          //   print_distance(min);
+        }
+      }
+
+      int t;
+      if (min.i > min.j) {
+        t = min.i;
+        min.i = min.j;
+        min.j = t;
+      }
+      min_dists[tid] = min;
     }
 
-    int t;
-    if (min.i > min.j) {
-      t = min.i;
-      min.i = min.j;
-      min.j = t;
-    }
-    min_dists[tid] = min;
-
-    sdata[tid] = min;
+    sdata[tid] = min_dists[tid];
     __syncthreads();
 
     for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {
