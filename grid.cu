@@ -369,7 +369,8 @@ __global__ void compute_nn(int *grid, EtaPhi *points, PseudoJet *jets,
 
     // Center
     if (i == 0) {
-      min = minimum_in_cell(grid, points, jets, min, tid, p.box_i, p.box_j, N);
+      sdata[0] =
+          minimum_in_cell(grid, points, jets, min, tid, p.box_i, p.box_j, N);
     }
 
     // Right
@@ -378,7 +379,7 @@ __global__ void compute_nn(int *grid, EtaPhi *points, PseudoJet *jets,
         sdata[i] = minimum_in_cell(grid, points, jets, min, tid, p.box_i + 1,
                                    p.box_j, N);
       }
-      return;
+      // return;
     }
 
     // Left
@@ -387,7 +388,7 @@ __global__ void compute_nn(int *grid, EtaPhi *points, PseudoJet *jets,
         sdata[i] = minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1,
                                    p.box_j, N);
       }
-      return;
+      // return;
     }
 
     // check if above grid_max_y
@@ -396,7 +397,7 @@ __global__ void compute_nn(int *grid, EtaPhi *points, PseudoJet *jets,
     // Up
     if (i == 3) {
       sdata[i] = minimum_in_cell(grid, points, jets, min, tid, p.box_i, j, N);
-      return;
+      // return;
     }
 
     // Up Right
@@ -405,7 +406,7 @@ __global__ void compute_nn(int *grid, EtaPhi *points, PseudoJet *jets,
         sdata[i] =
             minimum_in_cell(grid, points, jets, min, tid, p.box_i + 1, j, N);
       }
-      return;
+      // return;
     }
 
     // Up Left
@@ -414,7 +415,7 @@ __global__ void compute_nn(int *grid, EtaPhi *points, PseudoJet *jets,
         sdata[i] =
             minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1, j, N);
       }
-      return;
+      // return;
     }
 
     // check if bellow 0
@@ -423,7 +424,7 @@ __global__ void compute_nn(int *grid, EtaPhi *points, PseudoJet *jets,
     // Down
     if (i == 6) {
       sdata[i] = minimum_in_cell(grid, points, jets, min, tid, p.box_i, j, N);
-      return;
+      // return;
     }
 
     // Down Right
@@ -432,7 +433,7 @@ __global__ void compute_nn(int *grid, EtaPhi *points, PseudoJet *jets,
         sdata[i] =
             minimum_in_cell(grid, points, jets, min, tid, p.box_i + 1, j, N);
       }
-      return;
+      // return;
     }
 
     // Down Left
@@ -441,7 +442,7 @@ __global__ void compute_nn(int *grid, EtaPhi *points, PseudoJet *jets,
         sdata[i] =
             minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1, j, N);
       }
-      return;
+      // return;
     }
 
     if (p.box_j - 1 < 0) {
@@ -449,7 +450,7 @@ __global__ void compute_nn(int *grid, EtaPhi *points, PseudoJet *jets,
       if (i == 9) {
         sdata[i] =
             minimum_in_cell(grid, points, jets, min, tid, p.box_i, j - 1, N);
-        return;
+        // return;
       }
       // Down Down Right
       if (i == 10) {
@@ -457,7 +458,7 @@ __global__ void compute_nn(int *grid, EtaPhi *points, PseudoJet *jets,
           sdata[i] = minimum_in_cell(grid, points, jets, min, tid, p.box_i + 1,
                                      j - 1, N);
         }
-        return;
+        // return;
       }
 
       // Down Down Left
@@ -466,7 +467,7 @@ __global__ void compute_nn(int *grid, EtaPhi *points, PseudoJet *jets,
           sdata[i] = minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1,
                                      j - 1, N);
         }
-        return;
+        // return;
       }
     }
 
@@ -476,15 +477,24 @@ __global__ void compute_nn(int *grid, EtaPhi *points, PseudoJet *jets,
 
     __syncthreads();
 
-    if (i == 0) {
-      for (int k = 1; k < blockDim.x; k++) {
-        if (min.distance > sdata[k].distance) {
-          min = sdata[k];
+    for (unsigned int s = 8; s > 0; s >>= 1) {
+      if (i < s && (i + s) < blockDim.x) {
+        if (sdata[i + s].distance < sdata[i].distance) {
+          sdata[i] = sdata[i + s];
         }
       }
+      __syncthreads();
+    }
+
+    if (i == 0) {
+      // for (int k = 1; k < blockDim.x; k++) {
+      //   if (min.distance > sdata[k].distance) {
+      //     min = sdata[k];
+      //   }
+      // }
       // if (tid == 325)
       // print_distance(min);
-      min_dists[tid] = min;
+      min_dists[tid] = sdata[0];
     }
   }
 }
