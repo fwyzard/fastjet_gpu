@@ -96,7 +96,7 @@ __host__ __device__ EtaPhi _set_jet(PseudoJet &jet) {
   return point;
 }
 
-__device__ double plain_distance(EtaPhi &p1, EtaPhi &p2) {
+__device__ double plain_distance(const EtaPhi &p1, const EtaPhi &p2) {
   double dphi = abs(p1.phi - p2.phi);
   if (dphi > pi) {
     dphi = twopi - dphi;
@@ -105,7 +105,7 @@ __device__ double plain_distance(EtaPhi &p1, EtaPhi &p2) {
   return (dphi * dphi + drap * drap);
 }
 
-__device__ Dist yij_distance(EtaPhi *points, int i, int j) {
+__device__ Dist yij_distance(const EtaPhi *points, int i, int j) {
   // k is the one in qusetion
   // d k tid
   if (i > j) {
@@ -127,8 +127,8 @@ __device__ Dist yij_distance(EtaPhi *points, int i, int j) {
   return d;
 }
 
-__device__ Dist minimum_in_cell(int *grid, EtaPhi *points, PseudoJet *jets,
-                                Dist min, int tid, int i, int j, int n) {
+__device__ Dist minimum_in_cell(const int *grid, const EtaPhi *points, const PseudoJet *jets,
+                                Dist min, const int tid, const int i, const int j, const int n) {
   int k = 0;
   int offset = (j * n) + (i * grid_max_y * n);
   int num = grid[offset + k];
@@ -151,7 +151,7 @@ __device__ Dist minimum_in_cell(int *grid, EtaPhi *points, PseudoJet *jets,
   return min;
 }
 
-__device__ void remove_from_grid(int *grid, PseudoJet &jet, EtaPhi &p, int n) {
+__device__ void remove_from_grid(int *grid, PseudoJet &jet, const EtaPhi &p, const int n) {
   // Remove from grid
   int k = 0;
   int offset = (p.box_j * n) + (p.box_i * grid_max_y * n);
@@ -175,7 +175,7 @@ __device__ void remove_from_grid(int *grid, PseudoJet &jet, EtaPhi &p, int n) {
   }
 }
 
-__device__ void add_to_grid(int *grid, PseudoJet &jet, EtaPhi &p, int n) {
+__device__ void add_to_grid(int *grid, const PseudoJet &jet, const EtaPhi &p, const int n) {
   // Remove from grid
   int k = 0;
   int offset = (p.box_j * n) + (p.box_i * grid_max_y * n);
@@ -196,7 +196,7 @@ __device__ void add_to_grid(int *grid, PseudoJet &jet, EtaPhi &p, int n) {
 #pragma endregion
 
 #pragma region kernels
-__global__ void set_points(PseudoJet *jets, EtaPhi *points, int n, float r) {
+__global__ void set_points(PseudoJet *jets, EtaPhi *points, const int n, const float r) {
   int tid = threadIdx.x;
 
   if (tid >= n)
@@ -216,7 +216,7 @@ __global__ void set_points(PseudoJet *jets, EtaPhi *points, int n, float r) {
   //  p.diB);
 }
 
-__global__ void set_grid(int *grid, EtaPhi *points, PseudoJet *jets, int n) {
+__global__ void set_grid(int *grid, const EtaPhi *points, const PseudoJet *jets, const int n) {
   int tid = threadIdx.x;
   int bid = blockIdx.x;
 
@@ -246,107 +246,8 @@ __global__ void set_grid(int *grid, EtaPhi *points, PseudoJet *jets, int n) {
   // printf("-1\n");
 }
 
-// __global__ void compute_nn(int *grid, EtaPhi *points, PseudoJet *jets,
-//                            Dist *min_dists, int n, int N) {
-//   int tid = threadIdx.x;
-
-//   if (tid >= n)
-//     return;
-
-//
-
-//   // if (tid == 186 && n == 212)
-//   //   print_distance(min);
-
-//   // print_distance(min);
-// }
-
-__global__ void minimum_in_cell_kernel(int *grid, EtaPhi *points,
-                                       PseudoJet *jets, Dist *min_dists,
-                                       Dist min, int tid, EtaPhi p, int N) {
-  extern __shared__ Dist sdata[];
-
-  int i = threadIdx.x;
-
-  // Dist min;
-  int j;
-
-  if (i == 1) {
-    min = minimum_in_cell(grid, points, jets, min, tid, p.box_i, p.box_j, N);
-  } else if (i == 2) {
-    if (p.box_i + 1 < grid_max_x + 1) {
-      min = minimum_in_cell(grid, points, jets, min, tid, p.box_i + 1, p.box_j,
-                            N);
-    }
-  } else if (i == 3) {
-    if (p.box_i - 1 >= 0) {
-      min = minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1, p.box_j,
-                            N);
-    }
-  } else if (i == 4) {
-    j = p.box_j + 1 <= grid_max_y ? p.box_j + 1 : 0;
-    min = minimum_in_cell(grid, points, jets, min, tid, p.box_i, j, N);
-  } else if (i == 5) {
-    if (p.box_i + 1 < grid_max_x + 1) {
-      j = p.box_j + 1 <= grid_max_y ? p.box_j + 1 : 0;
-      min = minimum_in_cell(grid, points, jets, min, tid, p.box_i + 1, j, N);
-    }
-  } else if (i == 6) {
-    if (p.box_i - 1 >= 0) {
-      j = p.box_j + 1 <= grid_max_y ? p.box_j + 1 : 0;
-      min = minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1, j, N);
-    }
-  } else if (i == 7) {
-    j = p.box_j - 1 >= 0 ? p.box_j - 1 : grid_max_y - 1;
-    min = minimum_in_cell(grid, points, jets, min, tid, p.box_i, j, N);
-  } else if (i == 8) {
-    if (p.box_i + 1 < grid_max_x + 1) {
-      j = p.box_j - 1 >= 0 ? p.box_j - 1 : grid_max_y - 1;
-      min = minimum_in_cell(grid, points, jets, min, tid, p.box_i + 1, j, N);
-    }
-  } else if (i == 9) {
-    if (p.box_i - 1 >= 0) {
-      j = p.box_j - 1 >= 0 ? p.box_j - 1 : grid_max_y - 1;
-      min = minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1, j, N);
-    }
-  } else if (i == 10) {
-    if (p.box_j - 1 < 0) {
-      j = p.box_j - 1 >= 0 ? p.box_j - 1 : grid_max_y - 1;
-      min = minimum_in_cell(grid, points, jets, min, tid, p.box_i, j - 1, N);
-    }
-  } else if (i == 11) {
-    if (p.box_j - 1 < 0) {
-      j = p.box_j - 1 >= 0 ? p.box_j - 1 : grid_max_y - 1;
-      if (p.box_i + 1 < grid_max_x + 1) {
-        min = minimum_in_cell(grid, points, jets, min, tid, p.box_i + 1, j - 1,
-                              N);
-      }
-    }
-  } else if (i == 12) {
-    j = p.box_j - 1 >= 0 ? p.box_j - 1 : grid_max_y - 1;
-    if (p.box_i - 1 >= 0) {
-      min =
-          minimum_in_cell(grid, points, jets, min, tid, p.box_i - 1, j - 1, N);
-    }
-  }
-
-  sdata[i] = min;
-  __syncthreads();
-
-  if (i == 0) {
-    for (int k = 1; k <= 12; k++) {
-      if (min.distance > sdata[k].distance) {
-        min = sdata[k];
-      }
-    }
-
-    // print_distance(min);
-    min_dists[tid] = min;
-  }
-}
-
 __global__ void reduce_recombine(int *grid, EtaPhi *points, PseudoJet *jets,
-                                 Dist *min_dists, int n, float r, int N) {
+                                 Dist *min_dists, int n, const float r, const int N) {
   extern __shared__ Dist sdata[];
 
   int tid = threadIdx.x;
