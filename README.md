@@ -9,7 +9,7 @@ nvcc file.cu -o file
 
 ### Run
 ```
-./file < single-event.dat>
+./file < single-event.dat
 ```
 
 ### Enable Output and Benchmarking (Only for tri_matrix.cu)
