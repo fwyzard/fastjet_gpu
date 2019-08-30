@@ -13,6 +13,17 @@
 // Simple utility function to check for CUDA runtime errors
 void checkCUDAError(const char *msg);
 
+unsigned int upper_power_of_two(int v) {
+
+  v |= v >> 1;
+  v |= v >> 2;
+  v |= v >> 4;
+  v |= v >> 8;
+  v |= v >> 16;
+
+  return v;
+}
+
 using namespace std;
 
 struct PseudoJet {
@@ -99,18 +110,25 @@ __device__ void tid_to_ij(int &i, int &j, int tid) {
   i -= 1;
 }
 
-__global__ void set_jets(PseudoJet *jets) {
+__global__ void set_jets(PseudoJet *jets, int *min) {
   int tid = blockDim.x * blockIdx.x + threadIdx.x;
   _set_jet(jets[tid]);
+  if (tid == 0)
+    min[0] = -1;
 }
 
-__global__ void set_distances(PseudoJet *jets, double *distances, int *indices,
+__global__ void reduction_min(PseudoJet *jets, double *distances,
+                              double *distances_out, int *indices,
                               int *indices_ii, int *indices_jj,
-                              int const num_particels) {
-  int tid = blockDim.x * blockIdx.x + threadIdx.x;
-  int N = num_particels * (num_particels + 1) / 2;
+                              int const distances_array_size,
+                              int const num_particels, int *min) {
+  extern __shared__ double sdata[];
+  double *s_distances = sdata;
+  int *s_indices = (int *)&s_distances[blockDim.x];
 
-  if (tid >= N)
+  unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
+
+  if (tid >= distances_array_size)
     return;
 
   indices[tid] = tid;
@@ -120,37 +138,22 @@ __global__ void set_distances(PseudoJet *jets, double *distances, int *indices,
   indices_ii[tid] = i;
   indices_jj[tid] = j;
 
+  double d;
+
   if (i == j) {
-    distances[tid] = jets[i].diB;
+    d = jets[i].diB;
   } else {
-    distances[tid] = yij_distance(jets[i], jets[j]);
+    d = yij_distance(jets[i], jets[j]);
   }
-}
 
-__global__ void reduction_min(PseudoJet *jets, double *distances,
-                              double *distances_out, int *indices,
-                              int *indices_ii, int *indices_jj,
-                              int const distances_array_size,
-                              int const num_particels) {
-  extern __shared__ double sdata[];
-  double *s_distances = sdata;
-  int *s_indices = (int *)&s_distances[blockDim.x];
-
-  unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
-  unsigned int i = threadIdx.x;
-
-  if (tid >= distances_array_size)
-    return;
-
-  s_distances[i] = distances[tid];
+  i = threadIdx.x;
+  s_distances[i] = d;
   s_indices[i] = tid;
   __syncthreads();
 
   int jj;
   for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {
     if (i < s && (tid + s) < distances_array_size) {
-      // tid_to_ij(ii, jj, s_indices[i + s]);
-      // ii = indices_ii[s_indices[i + s]];
       jj = indices_jj[s_indices[i + s]];
       if (s_distances[i] > s_distances[i + s] && jj < num_particels) {
         s_distances[i] = s_distances[i + s];
@@ -172,7 +175,7 @@ __global__ void reduction_blocks(PseudoJet *jets, double *distances,
                                  double *distances_out, int *indices,
                                  int *indices_ii, int *indices_jj,
                                  int const distances_array_size,
-                                 int const num_particles) {
+                                 int const num_particles, int *min) {
   extern __shared__ double sdata[];
   double *s_distances = sdata;
   int *s_indices = (int *)&s_distances[blockDim.x];
@@ -187,13 +190,9 @@ __global__ void reduction_blocks(PseudoJet *jets, double *distances,
   s_indices[i] = indices[tid];
   __syncthreads();
 
-  int jj;
   for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {
     if (i < s && (tid + s) < distances_array_size) {
-      // tid_to_ij(ii, jj, s_indices[i + s]);
-      // ii = indices_ii[s_indices[i + s]];
-      jj = indices_jj[s_indices[i + s]];
-      if (s_distances[i] > s_distances[i + s] && jj < num_particles) {
+      if (s_distances[i] > s_distances[i + s]) {
         s_distances[i] = s_distances[i + s];
 
         s_indices[i] = s_indices[i + s];
@@ -208,9 +207,17 @@ __global__ void reduction_blocks(PseudoJet *jets, double *distances,
     indices[blockIdx.x] = min_tid;
 
     int i, j;
-    // tid_to_ij(i, j, min_tid);
     i = indices_ii[min_tid];
     j = indices_jj[min_tid];
+
+    min[0] = i;
+    min[0] = j;
+
+    // printf("%4d%4d%4d%20.8e\n", num_particles, i, j, s_distances[0]);
+
+    // int f, e;
+    // tid_to_ij(f, e, 58101);
+    // printf("%4d%4d%4d%20.8e\n", num_particles, f, e, distances[58101]);
 
     if (i == j) {
       PseudoJet temp;
@@ -226,51 +233,6 @@ __global__ void reduction_blocks(PseudoJet *jets, double *distances,
       _set_jet(jets[i]);
 
       jets[j] = jets[num_particles - 1];
-    }
-  }
-}
-
-__global__ void recombine_recalculate(PseudoJet *jets, double *distances,
-                                      double *distances_out, int *indices,
-                                      int *indices_ii, int *indices_jj,
-                                      int const n, int d_out_size) {
-  int tid = blockDim.x * blockIdx.x + threadIdx.x;
-  int i, j;
-  int index = indices[0];
-
-  // tid_to_ij(i, j, index);
-  i = indices_ii[index];
-  j = indices_jj[index];
-
-  if (j >= n) {
-    // tid_to_ij(i, j, index - n);
-    i = indices_ii[index - n];
-    j = indices_jj[index - n];
-  }
-  int tid_j = tid + ((j) * (j + 1) / 2);
-
-  if (tid >= n)
-    return;
-
-  if (tid == j) {
-    distances[tid_j] = jets[tid].diB;
-  } else if (tid < j) {
-    distances[tid_j] = yij_distance(jets[tid], jets[j]);
-  } else {
-    tid_j = j + ((tid) * (tid + 1) / 2);
-    distances[tid_j] = yij_distance(jets[tid], jets[j]);
-  }
-
-  int tid_i = tid_j;
-  if (i != j) {
-    tid_i = tid + ((i) * (i + 1) / 2);
-    if (tid == i)
-      distances[tid_i] = jets[tid].diB;
-    else if (tid < i) {
-      distances[tid_i] = yij_distance(jets[tid], jets[i]);
-    } else {
-      tid_i = i + ((tid) * (tid + 1) / 2);
-      distances[tid_i] = yij_distance(jets[tid], jets[i]);
     }
   }
 }
@@ -343,7 +305,10 @@ int main() {
     cudaMalloc((void **)&d_indices_jj,
                (num_particels * (num_particels + 1) / 2) * sizeof(int));
 
-    int num_threads = 354;
+    int *d_min = 0;
+    cudaMalloc((void **)&d_min, 2 * sizeof(int));
+
+    int num_threads = num_particels;
     int num_blocks = (num_particels + num_threads) / (num_threads + 1);
 
     double *d_out = 0;
@@ -358,14 +323,7 @@ int main() {
       cudaEventRecord(start);
 #endif
       // Compute dIB, eta, phi for each jet
-      set_jets<<<num_blocks, num_threads>>>(d_jets);
-
-      num_threads = (num_particels * (num_particels + 1) / 2);
-      num_blocks = (num_threads / 1024) + 1;
-      // Set an N * (N+1) / 2 array to store distances
-      set_distances<<<num_blocks, 1024>>>(d_jets, d_distances, d_indices,
-                                          d_indices_ii, d_indices_jj,
-                                          num_particels);
+      set_jets<<<num_blocks, num_threads>>>(d_jets, d_min);
 
       // Loop n times reduce + recombine
       for (int n = num_particels; n > 0; n--) {
@@ -375,19 +333,17 @@ int main() {
         // Find the minimum in each block for the distances array
         reduction_min<<<num_blocks, 1024,
                         1024 * sizeof(double) + 1024 * sizeof(int)>>>(
-            d_jets, d_distances, d_out, d_indices, d_indices_ii, d_indices_jj,
-            num_threads, n);
+            d_jets, d_distances, d_out, d_indices, d_indices_ii,
+            d_indices_jj,
+            num_threads, n, d_min);
 
-        // Find the minimum of all blocks
-        reduction_blocks<<<1, num_blocks, num_blocks * sizeof(double) +
-                                              num_blocks * sizeof(int)>>>(
+        // // Find the minimum of all blocks
+        int b = upper_power_of_two(num_blocks - 1);
+        // cout << num_blocks << "\t" << b + 1 << endl;
+        reduction_blocks<<<1, b + 1, (b + 1) * sizeof(double) +
+                                         num_blocks * sizeof(int)>>>(
             d_jets, d_out, d_out, d_indices, d_indices_ii, d_indices_jj,
-            num_blocks, n);
-
-        // Find the minimum of all blocks + recombine + recalculate distances
-        recombine_recalculate<<<(num_particels / 1024) + 1, 1024>>>(
-            d_jets, d_distances, d_out, d_indices, d_indices_ii, d_indices_jj,
-            n - 1, num_blocks);
+            num_blocks, n, d_min);
       }
 #if BENCH
       cudaEventRecord(stop);
