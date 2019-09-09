@@ -8,7 +8,7 @@
 // Here you can set the device ID that was assigned to you
 #define MYDEVICE 0
 #define OUTPUT_JETS false
-#define BENCH true
+#define BENCH !OUTPUT_JETS
 
 // Simple utility function to check for CUDA runtime errors
 void checkCUDAError(const char *msg);
@@ -35,16 +35,20 @@ struct PseudoJet {
   double phi;
   double rap;
   bool isJet;
+
+  __host__ __device__ double get_diB() const {
+    return diB > 1e-300 ? 1.0 / diB : 1e300;
+  }
 };
 
 const double pi = 3.141592653589793238462643383279502884197;
 const double twopi = 6.283185307179586476925286766559005768394;
 const double MaxRap = 1e5;
-const double R = 0.6;
+const double R = 0.4;
 const double R2 = R * R;
 const double invR2 = 1.0 / R2;
 #if OUTPUT_JETS
-const double ptmin = 5.0;
+const double ptmin = 1.0;
 const double dcut = ptmin * ptmin;
 #endif
 
@@ -99,7 +103,8 @@ __device__ double plain_distance(PseudoJet &jet1, PseudoJet &jet2) {
 }
 
 __device__ double yij_distance(PseudoJet &jet1, PseudoJet &jet2) {
-  return min(jet1.diB, jet2.diB) * plain_distance(jet1, jet2) * invR2;
+  return min(jet1.get_diB(), jet2.get_diB()) * plain_distance(jet1, jet2) *
+         invR2;
 }
 
 __device__ void tid_to_ij(int &i, int &j, int tid) {
@@ -141,7 +146,7 @@ __global__ void reduction_min(PseudoJet *jets, double *distances,
   double d;
 
   if (i == j) {
-    d = jets[i].diB;
+    d = jets[i].get_diB();
   } else {
     d = yij_distance(jets[i], jets[j]);
   }
@@ -333,8 +338,7 @@ int main() {
         // Find the minimum in each block for the distances array
         reduction_min<<<num_blocks, 1024,
                         1024 * sizeof(double) + 1024 * sizeof(int)>>>(
-            d_jets, d_distances, d_out, d_indices, d_indices_ii,
-            d_indices_jj,
+            d_jets, d_distances, d_out, d_indices, d_indices_ii, d_indices_jj,
             num_threads, n, d_min);
 
         // // Find the minimum of all blocks
@@ -373,8 +377,9 @@ int main() {
 
     for (int i = 0; i < num_particels; i++)
       if (h_jets[i].diB >= dcut && h_jets[i].isJet)
-        printf("%15.8f %15.8f %15.8f\n", h_jets[i].rap, h_jets[i].phi,
-               sqrt(h_jets[i].diB));
+        printf("%15.8f %15.8f %15.8f %15.8f %15.8f %15.8f %15.8f\n",
+               h_jets[i].px, h_jets[i].py, h_jets[i].pz, h_jets[i].E,
+               h_jets[i].rap, h_jets[i].phi, sqrt(h_jets[i].diB));
 #endif
 
     // free device memory
