@@ -7,8 +7,8 @@
 #include <vector>
 // Here you can set the device ID that was assigned to you
 #define MYDEVICE 0
-#define OUTPUT_JETS false
-#define BENCH true
+#define OUTPUT_JETS true 
+#define BENCH false
 
 // Simple utility function to check for CUDA runtime errors
 void checkCUDAError(const char *msg);
@@ -29,11 +29,11 @@ struct PseudoJet {
 const double pi = 3.141592653589793238462643383279502884197;
 const double twopi = 6.283185307179586476925286766559005768394;
 const double MaxRap = 1e5;
-const double R = 0.6;
+const double R = 0.4;
 const double R2 = R * R;
 const double invR2 = 1.0 / R2;
 #if OUTPUT_JETS
-const double ptmin = 5.0;
+const double ptmin = 1.0;
 const double dcut = ptmin * ptmin;
 #endif
 
@@ -343,7 +343,7 @@ int main() {
     cudaMalloc((void **)&d_indices_jj,
                (num_particels * (num_particels + 1) / 2) * sizeof(int));
 
-    int num_threads = 354;
+    int num_threads = num_particels;
     int num_blocks = (num_particels + num_threads) / (num_threads + 1);
 
     double *d_out = 0;
