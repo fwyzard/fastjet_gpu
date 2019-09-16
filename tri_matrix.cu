@@ -169,7 +169,7 @@ __global__ void reduction_blocks(PseudoJet *jets, Dist *distances_out,
                                  int const distances_array_size,
                                  int const num_particles) {
   // Specialize BlockReduce type for our thread block
-  typedef BlockReduce<Dist, 512> BlockReduceT;
+  typedef BlockReduce<Dist, 1024> BlockReduceT;
   // Shared memory
   __shared__ typename BlockReduceT::TempStorage sdata;
 
@@ -297,7 +297,7 @@ int main() {
         // // Find the minimum of all blocks
         int b = upper_power_of_two(num_blocks - 1) + 1;
         // cout << num_blocks << "\t" << b + 1 << endl;
-        reduction_blocks<<<1, 512, 512 * sizeof(Dist)>>>(d_jets, d_out, num_blocks,
+        reduction_blocks<<<1, b, b * sizeof(Dist)>>>(d_jets, d_out, num_blocks,
                                                      n);
       }
 #if BENCH
@@ -328,9 +328,8 @@ int main() {
 
     for (int i = 0; i < num_particles; i++)
       if (h_jets[i].diB >= dcut && h_jets[i].isJet)
-        printf("%15.8f %15.8f %15.8f %15.8f\n",
-               h_jets[i].px, h_jets[i].py, h_jets[i].pz, h_jets[i].E
-               );
+        printf("%15.8f %15.8f %15.8f %15.8f\n", h_jets[i].px, h_jets[i].py,
+               h_jets[i].pz, h_jets[i].E);
 #endif
 
     // free device memory
