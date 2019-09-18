@@ -1,8 +1,14 @@
 # fastjet_gpu
-porting the fastjet software package to work on GPUS
-private repo for now.
+Porting the fastjet software package to work on GPUS.
 
-### Compile
+### Compile tri_matrix
+To compile tri_matrix.cu you will need CUDA [CUB library](https://nvlabs.github.io/cub/).
+Tested with CUB v1.8.0
+```
+nvcc -I "path-to-cub-library" file.cu -o file 
+```
+
+### Compile Others
 ```
 nvcc file.cu -o file
 ```
