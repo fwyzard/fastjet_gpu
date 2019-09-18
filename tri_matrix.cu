@@ -8,7 +8,7 @@
 #include <vector>
 // Here you can set the device ID that was assigned to you
 #define MYDEVICE 0
-#define OUTPUT_JETS false
+#define OUTPUT_JETS false 
 #define BENCH !OUTPUT_JETS
 
 // Simple utility function to check for CUDA runtime errors
@@ -297,7 +297,7 @@ int main() {
         // // Find the minimum of all blocks
         int b = upper_power_of_two(num_blocks - 1) + 1;
         // cout << num_blocks << "\t" << b + 1 << endl;
-        reduction_blocks<<<1, b, b * sizeof(Dist)>>>(d_jets, d_out, num_blocks,
+        reduction_blocks<<<1, 1024, 1024 * sizeof(Dist)>>>(d_jets, d_out, num_blocks,
                                                      n);
       }
 #if BENCH
