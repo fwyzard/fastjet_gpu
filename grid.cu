@@ -1,5 +1,10 @@
-#include <iostream>
-#include <thrust/device_vector.h>
+#include <cmath>
+
+#include <cuda_runtime.h>
+
+#include "PseudoJet.h"
+#include "cluster.h"
+#include "cudaCheck.h"
 
 using namespace std;
 
@@ -11,23 +16,12 @@ const double R = 0.6;
 const double R2 = R * R;
 const double invR2 = 1.0 / R2;
 // const double MAX_DOUBLE = 1.79769e+308;
-const double ptmin = 5.0;
-const double dcut = ptmin * ptmin;
 const int grid_max_x = 50;
 const int grid_max_y = twopi / R + 1;
 const int eta_offsit = 25;
 #pragma endregion
 
 #pragma region struct
-struct PseudoJet {
-  int index;
-  double px;
-  double py;
-  double pz;
-  double E;
-  bool isJet;
-};
-
 struct EtaPhi {
   double eta;
   double phi;
@@ -41,13 +35,6 @@ struct Dist {
   int i;
   int j;
 };
-#pragma endregion
-
-#pragma region util_h
-// Simple utility function to check for CUDA runtime errors
-void checkCUDAError(const char *msg);
-__host__ __device__ void print_distance(Dist &d);
-__host__ __device__ void print_point(EtaPhi &p);
 #pragma endregion
 
 #pragma region device_functions
@@ -158,16 +145,11 @@ __device__ void remove_from_grid(int *grid, PseudoJet &jet, const EtaPhi &p, con
   int num = grid[offset + k];
   bool shift = false;
 
-  // if (jet.index == 212)
-  //   print_point(p);
   while (num != -1) {
     if (jet.index == num)
       shift = true;
-    // if (jet.index == 212)
-    //   printf("%d\n", num);
     if (shift) {
       grid[offset + k] = grid[offset + k + 1];
-      // k--;
     }
     k++;
 
@@ -181,8 +163,6 @@ __device__ void add_to_grid(int *grid, const PseudoJet &jet, const EtaPhi &p, co
   int offset = (p.box_j * n) + (p.box_i * grid_max_y * n);
   int num = grid[offset + k];
 
-  // if (jet.index == 212)
-  //   print_point(p);
   while (true) {
     num = grid[offset + k];
     if (num == -1) {
@@ -206,14 +186,7 @@ __global__ void set_points(PseudoJet *jets, EtaPhi *points, const int n, const f
   p.box_i = p.eta / r + eta_offsit;
   p.box_j = p.phi / r;
 
-  // if (p.box_j == 0)
-  //   print_point(p);
   points[tid] = p;
-  // printf("%4d", tid);
-  // print_point(p);
-  // printf("%4d%4d%4d%20.8e%20.8e%20.8e\n", tid, p.box_i, p.box_j, p.eta,
-  // p.phi,
-  //  p.diB);
 }
 
 __global__ void set_grid(int *grid, const EtaPhi *points, const PseudoJet *jets, const int n) {
@@ -270,7 +243,6 @@ __global__ void reduce_recombine(int *grid, EtaPhi *points, PseudoJet *jets,
     if (local_min.i == -3 || local_min.j == min.i || local_min.j == min.j ||
         local_min.i == min.i || local_min.i == min.j || local_min.i >= n ||
         local_min.j >= n) {
-      // print_distance(min_dists[tid]);
 
       EtaPhi bp;
 
@@ -425,8 +397,6 @@ __global__ void reduce_recombine(int *grid, EtaPhi *points, PseudoJet *jets,
     min = sdata[0];
     if (tid == 0) {
       // Dist d = yij_distance(points, 57, 61);
-      // print_distance(d);
-      // print_distance(min);
       PseudoJet jet_i, jet_j;
 
       EtaPhi p1, p2;
@@ -452,12 +422,8 @@ __global__ void reduce_recombine(int *grid, EtaPhi *points, PseudoJet *jets,
 
       } else {
         jet_i = jets[min.i];
-        // p1 = points[min.i];
-
         jet_j = jets[min.j];
-        // p2 = points[min.j];
 
-        // print_point(points[287]);
         remove_from_grid(grid, jet_i, points[min.i], N);
         remove_from_grid(grid, jet_j, points[min.j], N);
         if (min.j != n - 1) {
@@ -494,150 +460,33 @@ __global__ void reduce_recombine(int *grid, EtaPhi *points, PseudoJet *jets,
 }
 #pragma endregion
 
-int main() {
 
-#pragma region device_prop
-  cudaSetDevice(0);
-  cudaDeviceProp prop;
-  cudaGetDeviceProperties(&prop, 0);
-  printf("Device Name: %s\n", prop.name);
-#pragma endregion
-
-  int num_events = 1;
-
-  for (int event = 0; event < num_events; event++) {
-
-#pragma region read_jets
-    thrust::host_vector<PseudoJet> h_jets;
-    PseudoJet temp;
-
-    int i = 0;
-    while (true) {
-      cin >> temp.px >> temp.py >> temp.pz >> temp.E;
-      temp.index = i;
-      if (cin.fail())
-        break;
-
-      i++;
-      h_jets.push_back(temp);
-    }
-
-    cin.clear();
-    cin.ignore(numeric_limits<streamsize>::max(), '\n');
-
-    int n = h_jets.size();
-    int N = n;
-#pragma endregion
-
+void cluster(PseudoJet* particles, int size) {
 #pragma region vectors
-    thrust::device_vector<PseudoJet> d_jets(h_jets);
-    PseudoJet *d_jets_ptr = thrust::raw_pointer_cast(d_jets.data());
+  EtaPhi* d_points_ptr;
+  cudaCheck(cudaMalloc(&d_points_ptr, sizeof(EtaPhi) * size));
 
-    thrust::device_vector<EtaPhi> d_points(n);
-    EtaPhi *d_points_ptr = thrust::raw_pointer_cast(d_points.data());
+  int *d_grid_ptr;
+  cudaCheck(cudaMalloc(&d_grid_ptr, sizeof(int) * size * grid_max_x * grid_max_y));
 
-    thrust::device_vector<int> d_grid(n * grid_max_x * grid_max_y);
-    int *d_grid_ptr = thrust::raw_pointer_cast(d_grid.data());
-
-    thrust::device_vector<Dist> d_min_dists(n);
-    Dist *d_min_dists_ptr = thrust::raw_pointer_cast(d_min_dists.data());
+  Dist *d_min_dists_ptr;
+  cudaCheck(cudaMalloc(&d_min_dists_ptr, sizeof(Dist) * size));
 #pragma endregion
-
-#pragma region timing
-    cudaEvent_t start, stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
-    cudaEventRecord(start);
-#pragma endregion;
 
 #pragma region kernel_launches
-    // set jets into points
-    set_points<<<1, 512>>>(d_jets_ptr, d_points_ptr, n, R);
+  // set jets into points
+  set_points<<<1, 512>>>(particles, d_points_ptr, size, R);
 
-    // create grid
-    set_grid<<<grid_max_x + 1, grid_max_y>>>(d_grid_ptr, d_points_ptr,
-                                             d_jets_ptr, n);
+  // create grid
+  set_grid<<<grid_max_x + 1, grid_max_y>>>(d_grid_ptr, d_points_ptr,
+      particles, size);
 
-    // compute dist_min
-    // for (int i = n; i > 0; i--) {
-    // compute_nn<<<1, n>>>(d_grid_ptr, d_points_ptr, d_jets_ptr,
-    //                      d_min_dists_ptr, i, N);
+  // compute dist_min
+  // for (int i = n; i > 0; i--) {
+  // compute_nn<<<1, n>>>(d_grid_ptr, d_points_ptr, particles,
+  //                      d_min_dists_ptr, i, N);
 
-    reduce_recombine<<<1, 354, sizeof(Dist) * n>>>(
-        d_grid_ptr, d_points_ptr, d_jets_ptr, d_min_dists_ptr, n, R, N);
-// }
+  reduce_recombine<<<1, 354, sizeof(Dist) * size>>>(
+      d_grid_ptr, d_points_ptr, particles, d_min_dists_ptr, size, R, size);
 #pragma endregion
-
-#pragma region timing
-
-    cudaEventRecord(stop);
-    cudaEventSynchronize(stop);
-
-    // Check for any CUDA errors
-    checkCUDAError("kernal launch");
-    float milliseconds = 0;
-    cudaEventElapsedTime(&milliseconds, start, stop);
-    printf("%d\t%.3fms\n", h_jets.size(), milliseconds);
-#pragma endregion
-
-    thrust::host_vector<int> h_grid(d_grid);
-    // // h_grid = d_grid;
-    // thrust::host_vector<Dist> h_min_dists(d_min_dists);
-    thrust::host_vector<EtaPhi> h_points(d_points);
-
-#pragma region testing
-    h_jets = d_jets;
-    // thrust::host_vector<EtaPhi> h_points(d_points);
-    // thrust::host_vector<Dist> h_min_dists(d_min_dists);
-
-    for (int i = 0; i < n; i++) {
-      // printf("%4d%4d%20.8e\n", h_min_dists[i].i, h_min_dists[i].j,
-      //        h_min_dists[i].distance);
-      if (h_points[i].diB >= dcut && h_jets[i].isJet)
-        printf("%15.8f %15.8f %15.8f\n", h_points[i].eta, h_points[i].phi,
-               sqrt(h_points[i].diB));
-    }
-
-// for (int i = 0; i < n; i++)
-// print_distance(h_min_dists[i]);
-// for (int i = 0; i < n; i++)
-//   print_point(h_points[i]);
-
-// for (int i = 0; i < grid_max_x; i++)
-//   for (int j = 0; j < grid_max_y; j++) {
-//     cout << i << " " << j << ": ";
-//     int offset = (j * n) + (i * grid_max_y * n);
-//     for (int k = 0; k < n; k++) {
-//       int num = h_grid[offset + k];
-//       if (num == -1)
-//         break;
-//       cout << h_grid[offset + k] << " ";
-//     }
-//     cout << -1 << endl;
-//   }
-#pragma endregion
-  }
-
-  return 0;
 }
-
-#pragma region util_c
-void checkCUDAError(const char *msg) {
-  cudaError_t err = cudaGetLastError();
-  if (cudaSuccess != err) {
-    fprintf(stderr, "Cuda error: %s: %s.\n", msg, cudaGetErrorString(err));
-    exit(-1);
-  }
-}
-
-__host__ __device__ void print_distance(Dist &d) {
-  if (d.i == d.j)
-    printf("%4d%4d%20.8e\n", d.i, -2, d.distance);
-  else
-    printf("%4d%4d%20.8e\n", d.i, d.j, d.distance);
-}
-
-__host__ __device__ void print_point(EtaPhi &p) {
-  printf("%4d%4d%20.8e%20.8e%20.8e\n", p.box_i, p.box_j, p.eta, p.phi, p.diB);
-}
-#pragma endregion
