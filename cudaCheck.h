@@ -15,7 +15,7 @@ namespace {
     out << file << ", line " << line << ":\n";
     out << "cudaCheck(" << cmd << ");\n";
     out << error << ": " << message << "\n";
-    std::cerr << out.rdbuf() << std::endl;
+    std::cerr << out.str() << std::endl;
   }
 
 }  // namespace
