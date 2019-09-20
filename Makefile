@@ -1,10 +1,19 @@
 .PHONY: all clean
 
-CUDA_BASE:=$(shell scram tool tag cuda CUDA_BASE)
-CUB_BASE:=$(shell scram tool tag cub CUB_BASE)
+CUDA_BASE:=/usr/local/cuda-10.1
+CUDA_INCLUDE_PATH=$(CUDA_BASE)/include
+CUDA_LIBRARY_PATH=$(CUDA_BASE)/lib64
 
-NVCC=nvcc
-NVCC_FLAGS=-std=c++14 -O2 --generate-code arch=compute_75,code=sm_75 -I$(CUB_BASE)/include
+CUB_BASE:=$(CUDA_BASE)/targets/x86_64-linux/include/thrust/system/cuda/detail
+CUB_INCLUDE_PATH=$(CUB_BASE)
+
+CXX=g++-8
+CXX_FLAGS=-std=c++17 -O2 -g -I$(CUDA_INCLUDE_PATH) -I$(CUB_INCLUDE_PATH)
+LD_FLAGS=-L$(CUDA_LIBRARY_PATH) -lcudart -lcuda
+
+NVCC=$(CUDA_BASE)/bin/nvcc -ccbin $(CXX)
+NVCC_FLAGS=-std=c++14 -O2 -g --generate-code arch=compute_50,code=sm_50 -I$(CUB_INCLUDE_PATH)
+
 
 all: empty grid n_array tri_matrix
 
@@ -12,22 +21,22 @@ clean:
 	rm -f empty grid n_array tri_matrix *.o
 
 main.o: main.cc
-	g++ -c -std=c++17 -I$(CUDA_BASE)/include -I$(CUB_BASE)/include -g -O2 main.cc -o main.o
+	$(CXX) $(CXX_FLAGS) -c $< -o $@
 
 empty: empty.cu
 	$(NVCC) $(NVCC_FLAGS) $< -o $@
 
 tri_matrix.o: tri_matrix.cu
-	nvcc -c -std=c++14 -I$(CUDA_BASE)/include -I$(CUB_BASE)/include -g -O2 -arch=sm_75 tri_matrix.cu -o $@
+	$(NVCC) $(NVCC_FLAGS) -c $< -o $@
 
 tri_matrix: main.o tri_matrix.o
-	g++ -std=c++17 -L$(CUDA_BASE)/lib64 -g -O2 $^ -lcudart -lcuda -o $@
+	$(CXX) $(CXX_FLAGS) $^ $(LD_FLAGS) -o $@
 
 grid.o: grid.cu
-	nvcc -c -std=c++14 -I$(CUDA_BASE)/include -I$(CUB_BASE)/include -g -O2 -arch=sm_75 grid.cu -o $@
+	$(NVCC) $(NVCC_FLAGS) -c $< -o $@
 
 grid: main.o grid.o
-	g++ -std=c++17 -L$(CUDA_BASE)/lib64 -g -O2 $^ -lcudart -lcuda -o $@
+	$(CXX) $(CXX_FLAGS) $^ $(LD_FLAGS) -o $@
 
 n_array: n_array.cu
 	$(NVCC) $(NVCC_FLAGS) $< -o $@
