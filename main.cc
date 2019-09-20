@@ -143,12 +143,18 @@ int main(int argc, const char* argv[]) {
     double sum = 0.;
     double sum2 = 0.;
     for (int step = 0; repetitions == 0 or step < repetitions; ++step) {
+      cudaCheck(cudaEventRecord(start));
+
       // copy the input to the GPU
       cudaCheck(cudaMemcpy(particles_d, particles.data(), sizeof(PseudoJet) * particles.size(), cudaMemcpyDefault));
 
       // run the clustering algorithm and measure its running time
-      cudaCheck(cudaEventRecord(start));
       cluster(particles_d, particles.size());
+
+      // copy the clustered jets back to the CPU
+      jets.resize(particles.size());
+      cudaCheck(cudaMemcpy(jets.data(), particles_d, sizeof(PseudoJet) * jets.size(), cudaMemcpyDefault));
+
       cudaCheck(cudaEventRecord(stop));
       cudaCheck(cudaEventSynchronize(stop));
 
@@ -156,10 +162,6 @@ int main(int argc, const char* argv[]) {
       cudaCheck(cudaEventElapsedTime(&milliseconds, start, stop));
       sum += milliseconds;
       sum2 += milliseconds * milliseconds;
-
-      // copy the clustered jets back to the CPU
-      jets.resize(particles.size());
-      cudaCheck(cudaMemcpy(jets.data(), particles_d, sizeof(PseudoJet) * jets.size(), cudaMemcpyDefault));
 
       // remove the unused elements and the jets with pT < pTmin
       auto last = std::remove_if(jets.begin(), jets.end(), [ptmin](auto const& jet){
