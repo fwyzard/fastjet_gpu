@@ -188,14 +188,20 @@ int main(int argc, const char* argv[]) {
 
     print_jets(jets);
 
-    double mean  = sum / repetitions;
-    double sigma = std::sqrt((sum2 - sum * sum / repetitions) / (repetitions - 1));
-    int precision = std::max((int) -std::log10(sigma / 2.) + 1, 0);
     std::cout << std::defaultfloat;
     std::cout << "clustered " << particles.size() << " into " << jets.size() << " jets above " << ptmin << " GeV";
-    precision = std::cout.precision(precision);
     std::cout << std::fixed;
-    std::cout << " in " << mean << " +/- " << sigma << " ms" << std::endl;
+    double mean = sum / repetitions;
+    int precision;
+    if (repetitions > 1) {
+      double sigma = std::sqrt((sum2 - sum * sum / repetitions) / (repetitions - 1));
+      precision = std::max((int) -std::log10(sigma / 2.) + 1, 0);
+      precision = std::cout.precision(precision);
+      std::cout << " in " << mean << " +/- " << sigma << " ms" << std::endl;
+    } else {
+      precision = std::cout.precision(1);
+      std::cout << " in " << mean << " ms" << std::endl;
+    }
     std::cout.precision(precision);
     std::cout << std::defaultfloat;
   }
