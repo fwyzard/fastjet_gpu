@@ -1,12 +1,15 @@
-#include <iostream>
+#include <cmath>
+
+#include <cuda_runtime.h>
 #include <thrust/device_free.h>
 #include <thrust/device_vector.h>
 #include <thrust/memory.h>
 
-using namespace std;
+#include "PseudoJet.h"
+#include "cluster.h"
+#include "cudaCheck.h"
 
-// Simple utility function to check for CUDA runtime errors
-void checkCUDAError(const char *msg);
+using namespace std;
 
 const double pi = 3.141592653589793238462643383279502884197;
 const double twopi = 6.283185307179586476925286766559005768394;
@@ -14,18 +17,6 @@ const double MaxRap = 1e5;
 const double R = 0.6;
 const double R2 = R * R;
 const double invR2 = 1.0 / R2;
-// const double MAX_DOUBLE = 1.79769e+308;
-const double ptmin = 5.0;
-const double dcut = ptmin * ptmin;
-
-struct PseudoJet {
-  double px;
-  double py;
-  double pz;
-  double E;
-  int index;
-  bool isJet;
-};
 
 struct EtaPhi {
   double eta;
@@ -395,93 +386,24 @@ __global__ void fastjet(PseudoJet *jets, EtaPhi *points, Dist *dists,
   }
 }
 
-int main() {
-  cudaSetDevice(0);
-  cudaDeviceProp prop;
-  cudaGetDeviceProperties(&prop, 0);
-  printf("Device Name: %s\n", prop.name);
+void cluster(PseudoJet *particles, int size) {
+    EtaPhi *d_points_ptr;
+    cudaCheck(cudaMalloc(&d_points_ptr, sizeof(EtaPhi) * size));
 
-  int NUM_EVENTS = 1;
+    Dist *d_dists_ptr;
+    cudaCheck(cudaMalloc(&d_dists_ptr, sizeof(Dist) * size * (size + 1) / 2));
 
-  for (int event = 0; event < NUM_EVENTS; event++) {
-    // read jets
-    thrust::host_vector<PseudoJet> h_jets;
-    PseudoJet temp;
+    Dist *d_min_dists_ptr;
+    cudaCheck(cudaMalloc(&d_min_dists_ptr, sizeof(Dist) * size));
 
-    int i = 0;
-    while (true) {
-      cin >> temp.px >> temp.py >> temp.pz >> temp.E;
-      temp.index = i;
-      if (cin.fail())
-        break;
+    set_points<<<1, size>>>(particles, d_points_ptr);
 
-      i++;
-      h_jets.push_back(temp);
-    }
+    set_distances<<<size, 512, sizeof(Dist) * size>>>(d_points_ptr, d_min_dists_ptr);
 
-    cin.clear();
-    cin.ignore(numeric_limits<streamsize>::max(), '\n');
+    fastjet<<<1, 1024, (sizeof(Dist) * size)>>>(particles, d_points_ptr,
+                                             d_dists_ptr, d_min_dists_ptr, size);
 
-    int n = h_jets.size();
-
-    thrust::device_vector<PseudoJet> d_jets(h_jets);
-    PseudoJet *d_jets_ptr = thrust::raw_pointer_cast(d_jets.data());
-
-    thrust::device_vector<EtaPhi> d_points(n);
-    EtaPhi *d_points_ptr = thrust::raw_pointer_cast(d_points.data());
-
-    thrust::device_vector<Dist> d_dists(n * (n + 1) / 2);
-    Dist *d_dists_ptr = thrust::raw_pointer_cast(d_dists.data());
-
-    thrust::device_vector<Dist> d_min_dists(n);
-    Dist *d_min_dists_ptr = thrust::raw_pointer_cast(d_min_dists.data());
-
-    // CUDA Timing
-    cudaEvent_t start, stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
-    cudaEventRecord(start);
-
-    set_points<<<1, n>>>(d_jets_ptr, d_points_ptr);
-
-    set_distances<<<n, 512, sizeof(Dist) * n>>>(d_points_ptr, d_min_dists_ptr);
-
-    fastjet<<<1, 1024, (sizeof(Dist) * n)>>>(d_jets_ptr, d_points_ptr,
-                                             d_dists_ptr, d_min_dists_ptr, n);
-
-    cudaEventRecord(stop);
-    cudaEventSynchronize(stop);
-
-    // Check for any CUDA errors
-    checkCUDAError("kernal launch");
-
-    h_jets = d_jets;
-    thrust::host_vector<EtaPhi> h_points(d_points);
-    // thrust::host_vector<Dist> h_min_dists(d_min_dists);
-
-    for (int i = 0; i < n; i++) {
-      // printf("%4d%4d%20.8e\n", h_min_dists[i].i, h_min_dists[i].j,
-      //        h_min_dists[i].distance);
-      if (h_points[i].diB >= dcut && h_jets[i].isJet)
-        printf("%15.8f %15.8f %15.8f\n", h_points[i].eta, h_points[i].phi,
-               sqrt(h_points[i].diB));
-    }
-
-    float milliseconds = 0;
-    cudaEventElapsedTime(&milliseconds, start, stop);
-    printf("%d\t%.3fms\n", h_jets.size(), milliseconds);
-  }
-
-  // free(thrust::raw_pointer_cast(h_jets.data()));
-  // cudaFree(d_jets_ptr);
-  // cudaFree(d_min_dists_ptr);
-  return 0;
-}
-
-void checkCUDAError(const char *msg) {
-  cudaError_t err = cudaGetLastError();
-  if (cudaSuccess != err) {
-    fprintf(stderr, "Cuda error: %s: %s.\n", msg, cudaGetErrorString(err));
-    exit(-1);
-  }
+    cudaCheck(cudaFree(d_points_ptr));
+    cudaCheck(cudaFree(d_dists_ptr));
+    cudaCheck(cudaFree(d_min_dists_ptr));
 }

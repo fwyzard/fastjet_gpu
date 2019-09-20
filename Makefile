@@ -15,21 +15,24 @@ NVCC=$(CUDA_BASE)/bin/nvcc -ccbin $(CXX)
 NVCC_FLAGS=-std=c++14 -O2 -g --generate-code arch=compute_50,code=sm_50 -I$(CUB_INCLUDE_PATH)
 
 
-all: empty grid n_array tri_matrix
+all: grid n_array tri_matrix tri_matrix_empty
 
 clean:
-	rm -f empty grid n_array tri_matrix *.o
+	rm -f grid n_array tri_matrix tri_matrix_empty *.o
 
 main.o: main.cc
 	$(CXX) $(CXX_FLAGS) -c $< -o $@
-
-empty: empty.cu
-	$(NVCC) $(NVCC_FLAGS) $< -o $@
 
 tri_matrix.o: tri_matrix.cu
 	$(NVCC) $(NVCC_FLAGS) -c $< -o $@
 
 tri_matrix: main.o tri_matrix.o
+	$(CXX) $(CXX_FLAGS) $^ $(LD_FLAGS) -o $@
+
+tri_matrix_empty.o: tri_matrix_empty.cu
+	$(NVCC) $(NVCC_FLAGS) -c $< -o $@
+
+tri_matrix_empty: main.o tri_matrix_empty.o
 	$(CXX) $(CXX_FLAGS) $^ $(LD_FLAGS) -o $@
 
 grid.o: grid.cu
@@ -38,5 +41,8 @@ grid.o: grid.cu
 grid: main.o grid.o
 	$(CXX) $(CXX_FLAGS) $^ $(LD_FLAGS) -o $@
 
-n_array: n_array.cu
-	$(NVCC) $(NVCC_FLAGS) $< -o $@
+n_array.o: n_array.cu
+	$(NVCC) $(NVCC_FLAGS) -c $< -o $@
+
+n_array: main.o n_array.o
+	$(CXX) $(CXX_FLAGS) $^ $(LD_FLAGS) -o $@
