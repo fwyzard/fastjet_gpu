@@ -11,6 +11,7 @@
 
 #include "PseudoJet.h"
 #include "cluster.h"
+#include "cudaCheck.h"
 
 using namespace std;
 using namespace cub;
@@ -242,11 +243,11 @@ void cluster(PseudoJet *particles, int size) {
 
 #pragma regoin CudaMalloc
   PseudoJetExt *d_jets;
-  cudaMalloc(&d_jets, size * sizeof(PseudoJetExt));
+  cudaCheck(cudaMalloc(&d_jets, size * sizeof(PseudoJetExt)));
   init<<<8, 512>>>(particles, d_jets, size);
 
   Dist *d_out = 0;
-  cudaMalloc((void **)&d_out, size * sizeof(Dist));
+  cudaCheck(cudaMalloc((void **)&d_out, size * sizeof(Dist)));
 #pragma endregoin
 
   int num_threads = size;
@@ -271,4 +272,7 @@ void cluster(PseudoJet *particles, int size) {
   }
 
   output<<<8, 512>>>(d_jets, particles, size);
+
+  cudaCheck(cudaFree(d_jets));
+  cudaCheck(cudaFree(d_out));
 }

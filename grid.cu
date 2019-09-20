@@ -489,4 +489,8 @@ void cluster(PseudoJet* particles, int size) {
   reduce_recombine<<<1, 354, sizeof(Dist) * size>>>(
       d_grid_ptr, d_points_ptr, particles, d_min_dists_ptr, size, R, size);
 #pragma endregion
+
+  cudaCheck(cudaFree(d_points_ptr));
+  cudaCheck(cudaFree(d_grid_ptr));
+  cudaCheck(cudaFree(d_min_dists_ptr));
 }
