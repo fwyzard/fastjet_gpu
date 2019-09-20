@@ -44,9 +44,6 @@ struct PseudoJetExt {
 const double pi = 3.141592653589793238462643383279502884197;
 const double twopi = 6.283185307179586476925286766559005768394;
 const double MaxRap = 1e5;
-const double R = 0.4;
-const double R2 = R * R;
-const double invR2 = 1.0 / R2;
 //const double MAX_DOUBLE = 1.79769e+308;
 
 __device__ void _set_jet(PseudoJetExt &jet) {
@@ -99,9 +96,8 @@ __device__ double plain_distance(PseudoJetExt &jet1, PseudoJetExt &jet2) {
   return (dphi * dphi + drap * drap);
 }
 
-__device__ double yij_distance(PseudoJetExt &jet1, PseudoJetExt &jet2) {
-  return min(jet1.get_diB(), jet2.get_diB()) * plain_distance(jet1, jet2) *
-         invR2;
+__device__ double yij_distance(PseudoJetExt &jet1, PseudoJetExt &jet2, double one_over_r2) {
+  return min(jet1.get_diB(), jet2.get_diB()) * plain_distance(jet1, jet2) * one_over_r2;
 }
 
 __device__ void tid_to_ij(int &i, int &j, int tid) {
@@ -131,8 +127,8 @@ struct dist_compare {
 
 __global__ void reduction_min(PseudoJetExt *jets, Dist *distances_out,
                               int const distances_array_size,
-                              int const num_particles) {
-  /*
+                              int const num_particles, double one_over_r2) {
+#if 0
   // Specialize BlockReduce type for our thread block
   typedef BlockReduce<Dist, 1024> BlockReduceT;
   // Shared memory
@@ -149,7 +145,7 @@ __global__ void reduction_min(PseudoJetExt *jets, Dist *distances_out,
   } else if (dst.i == dst.j) {
     dst.d = jets[dst.i].get_diB();
   } else {
-    dst.d = yij_distance(jets[dst.i], jets[dst.j]);
+    dst.d = yij_distance(jets[dst.i], jets[dst.j], one_over_r2);
   }
 
   Dist min = BlockReduceT(sdata).Reduce(dst, dist_compare());
@@ -158,13 +154,13 @@ __global__ void reduction_min(PseudoJetExt *jets, Dist *distances_out,
     distances_out[blockIdx.x] = min;
     // printf("%4d%4d%4d%20.8e\n", num_particles, min.i, min.j, min.d);
   }
-  */
+#endif
 }
 
 __global__ void reduction_blocks(PseudoJetExt *jets, Dist *distances_out,
                                  int const distances_array_size,
                                  int const num_particles) {
-  /*
+#if 0
   // Specialize BlockReduce type for our thread block
   typedef BlockReduce<Dist, 1024> BlockReduceT;
   // Shared memory
@@ -209,7 +205,7 @@ __global__ void reduction_blocks(PseudoJetExt *jets, Dist *distances_out,
       jets[j] = jets[num_particles - 1];
     }
   }
-  */
+#endif
 }
 
 
@@ -243,7 +239,7 @@ void output(const PseudoJetExt *jets, PseudoJet *particles, int size) {
 }
 
 
-void cluster(PseudoJet *particles, int size) {
+void cluster(PseudoJet *particles, int size, double r) {
 
 #pragma regoin CudaMalloc
   PseudoJetExt *d_jets;
@@ -256,6 +252,7 @@ void cluster(PseudoJet *particles, int size) {
 
   int num_threads = size;
   int num_blocks = (size + num_threads) / (num_threads + 1);
+  double one_over_r2 = 1. / (r * r);
 
   // Compute dIB, eta, phi for each jet
   set_jets<<<num_blocks, num_threads>>>(d_jets);
@@ -267,7 +264,7 @@ void cluster(PseudoJet *particles, int size) {
 
     // Find the minimum in each block for the distances array
     reduction_min<<<num_blocks, 1024, 1024 * sizeof(Dist)>>>(
-        d_jets, d_out, num_threads, n);
+        d_jets, d_out, num_threads, n, one_over_r2);
 
     // // Find the minimum of all blocks
     int b = upper_power_of_two(num_blocks - 1) + 1;

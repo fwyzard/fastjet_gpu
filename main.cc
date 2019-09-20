@@ -74,7 +74,8 @@ void print_jets(std::vector<PseudoJet> const& jets) {
 
 
 int main(int argc, const char* argv[]) {
-  double ptmin = 1.0;   // GeV
+  double ptmin = 0.0;   // GeV
+  double r = 1.0;       // clustering radius
   bool sort = true;
   int repetitions = 1;
 
@@ -96,8 +97,25 @@ int main(int argc, const char* argv[]) {
       }
     } else
 
-    // --repeat, -r
-    if (std::strcmp(argv[i], "--repeat") == 0 or std::strcmp(argv[i], "-r") == 0) {
+    // -r, -R
+    if (std::strcmp(argv[i], "-r") == 0 or std::strcmp(argv[i], "-R") == 0) {
+      ++i;
+      if (i >= argc) {
+        // error
+        return 1;
+      }
+      char* stop;
+      auto arg = std::strtod(argv[i], &stop);
+      if (stop != argv[i] and arg >= 0) {
+        r = arg;
+      } else {
+        // error
+        return 1;
+      }
+    } else
+
+    // --repeat, -repeat
+    if (std::strcmp(argv[i], "--repeat") == 0 or std::strcmp(argv[i], "-repeat") == 0) {
       ++i;
       if (i >= argc) {
         // error
@@ -149,7 +167,7 @@ int main(int argc, const char* argv[]) {
       cudaCheck(cudaMemcpy(particles_d, particles.data(), sizeof(PseudoJet) * particles.size(), cudaMemcpyDefault));
 
       // run the clustering algorithm and measure its running time
-      cluster(particles_d, particles.size());
+      cluster(particles_d, particles.size(), r);
 
       // copy the clustered jets back to the CPU
       jets.resize(particles.size());

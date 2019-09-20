@@ -14,9 +14,6 @@ using namespace std;
 const double pi = 3.141592653589793238462643383279502884197;
 const double twopi = 6.283185307179586476925286766559005768394;
 const double MaxRap = 1e5;
-const double R = 0.6;
-const double R2 = R * R;
-const double invR2 = 1.0 / R2;
 
 struct EtaPhi {
   double eta;
@@ -43,7 +40,7 @@ __device__ double plain_distance(EtaPhi &p1, EtaPhi &p2) {
   return (dphi * dphi + drap * drap);
 }
 
-__device__ Dist yij_distance(EtaPhi *points, int i, int j) {
+__device__ Dist yij_distance(EtaPhi *points, int i, int j, double one_over_r2) {
   if (i > j) {
     int t = i;
     i = j;
@@ -57,7 +54,7 @@ __device__ Dist yij_distance(EtaPhi *points, int i, int j) {
     d.distance = points[i].diB;
   else
     d.distance = min(points[i].diB, points[j].diB) *
-                 plain_distance(points[i], points[j]) * invR2;
+                 plain_distance(points[i], points[j]) * one_over_r2;
 
   return d;
 }
@@ -112,7 +109,7 @@ __global__ void set_points(PseudoJet *jets, EtaPhi *points) {
   points[tid] = _set_jet(jets[tid]);
 }
 
-__global__ void set_distances(EtaPhi *points, Dist *min_dists) {
+__global__ void set_distances(EtaPhi *points, Dist *min_dists, double one_over_r2) {
   extern __shared__ Dist sdata[];
 
   int tid = threadIdx.x;
@@ -123,7 +120,7 @@ __global__ void set_distances(EtaPhi *points, Dist *min_dists) {
 
   Dist d1, d2;
 
-  sdata[tid] = yij_distance(points, tid, k);
+  sdata[tid] = yij_distance(points, tid, k, one_over_r2);
   __syncthreads();
 
   for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {
@@ -141,11 +138,11 @@ __global__ void set_distances(EtaPhi *points, Dist *min_dists) {
 
     if (k == 0) {
       // Compute min for jet 0
-      min_dists[0] = yij_distance(points, 0, 0);
+      min_dists[0] = yij_distance(points, 0, 0, one_over_r2);
 
       // Compute min for jet 1
-      d1 = yij_distance(points, 1, 0);
-      d2 = yij_distance(points, 1, 1);
+      d1 = yij_distance(points, 1, 0, one_over_r2);
+      d2 = yij_distance(points, 1, 1, one_over_r2);
       if (d1.distance < d2.distance)
         min_dists[1] = d1;
       else
@@ -155,7 +152,7 @@ __global__ void set_distances(EtaPhi *points, Dist *min_dists) {
 }
 
 __global__ void fastjet(PseudoJet *jets, EtaPhi *points, Dist *dists,
-                        Dist *min_dists, int n) {
+                        Dist *min_dists, int n, double one_over_r2) {
   extern __shared__ Dist sdata[];
 
   int tid = threadIdx.x;
@@ -183,7 +180,7 @@ __global__ void fastjet(PseudoJet *jets, EtaPhi *points, Dist *dists,
 
           // get d tid min.
           if (min.i < n && tid > min.i) {
-            temp = yij_distance(points, tid, min.i);
+            temp = yij_distance(points, tid, min.i, one_over_r2);
             // check if dj < sdata[tid].distance
             if (temp.distance < sdata[tid].distance) {
               sdata[tid] = temp;
@@ -193,7 +190,7 @@ __global__ void fastjet(PseudoJet *jets, EtaPhi *points, Dist *dists,
           }
 
           if (min.i < n && tid + s > min.i) {
-            temp = yij_distance(points, tid + s, min.i);
+            temp = yij_distance(points, tid + s, min.i, one_over_r2);
             // check if di < sdata[tid+s].distance
             if (temp.distance < sdata[tid + s].distance) {
               sdata[tid + s] = temp;
@@ -204,7 +201,7 @@ __global__ void fastjet(PseudoJet *jets, EtaPhi *points, Dist *dists,
 
           // get d tid min.j
           if (min.j < n && tid > min.j) {
-            temp = yij_distance(points, tid, min.j);
+            temp = yij_distance(points, tid, min.j, one_over_r2);
             // check if dj < sdata[tid].distance
             if (temp.distance < sdata[tid].distance) {
               sdata[tid] = temp;
@@ -214,7 +211,7 @@ __global__ void fastjet(PseudoJet *jets, EtaPhi *points, Dist *dists,
           }
 
           if (min.j < n && tid + s > min.j) {
-            temp = yij_distance(points, tid + s, min.j);
+            temp = yij_distance(points, tid + s, min.j, one_over_r2);
             // check if dj < sdata[tid+s].distance
             if (temp.distance < sdata[tid + s].distance && min.j) {
               sdata[tid + s] = temp;
@@ -290,7 +287,7 @@ __global__ void fastjet(PseudoJet *jets, EtaPhi *points, Dist *dists,
 
     for (k = n - 1; k >= 0; k--) {
       if (min_dists[k].distance < 0) {
-        sdata[tid] = yij_distance(points, k, tid);
+        sdata[tid] = yij_distance(points, k, tid, one_over_r2);
         // dists[(k * (k - 1) / 2) + tid];
         __syncthreads();
 
@@ -313,7 +310,7 @@ __global__ void fastjet(PseudoJet *jets, EtaPhi *points, Dist *dists,
 
 // min.i
 #pragma region
-    sdata[tid] = yij_distance(points, min.i, tid);
+    sdata[tid] = yij_distance(points, min.i, tid, one_over_r2);
     __syncthreads();
 
     for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {
@@ -331,11 +328,11 @@ __global__ void fastjet(PseudoJet *jets, EtaPhi *points, Dist *dists,
       min_dists[min.i] = sdata[0];
 
       // Compute min for jet 0
-      min_dists[0] = yij_distance(points, 0, 0);
+      min_dists[0] = yij_distance(points, 0, 0, one_over_r2);
 
       // Compute min for jet 1
-      d1 = yij_distance(points, 1, 0);
-      d2 = yij_distance(points, 1, 1);
+      d1 = yij_distance(points, 1, 0, one_over_r2);
+      d2 = yij_distance(points, 1, 1, one_over_r2);
       if (d1.distance < d2.distance)
         min_dists[1] = d1;
       else
@@ -348,7 +345,7 @@ __global__ void fastjet(PseudoJet *jets, EtaPhi *points, Dist *dists,
     // min.j
     if (min.i != min.j) {
 #pragma region
-      sdata[tid] = yij_distance(points, min.j, tid);
+      sdata[tid] = yij_distance(points, min.j, tid, one_over_r2);
       __syncthreads();
 
       for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {
@@ -386,7 +383,7 @@ __global__ void fastjet(PseudoJet *jets, EtaPhi *points, Dist *dists,
   }
 }
 
-void cluster(PseudoJet *particles, int size) {
+void cluster(PseudoJet *particles, int size, double r) {
     EtaPhi *d_points_ptr;
     cudaCheck(cudaMalloc(&d_points_ptr, sizeof(EtaPhi) * size));
 
@@ -398,10 +395,10 @@ void cluster(PseudoJet *particles, int size) {
 
     set_points<<<1, size>>>(particles, d_points_ptr);
 
-    set_distances<<<size, 512, sizeof(Dist) * size>>>(d_points_ptr, d_min_dists_ptr);
+    const double one_over_r2 = 1. / (r * r);
+    set_distances<<<size, 512, sizeof(Dist) * size>>>(d_points_ptr, d_min_dists_ptr, one_over_r2);
 
-    fastjet<<<1, 1024, (sizeof(Dist) * size)>>>(particles, d_points_ptr,
-                                             d_dists_ptr, d_min_dists_ptr, size);
+    fastjet<<<1, 1024, (sizeof(Dist) * size)>>>(particles, d_points_ptr, d_dists_ptr, d_min_dists_ptr, size, one_over_r2);
 
     cudaCheck(cudaFree(d_points_ptr));
     cudaCheck(cudaFree(d_dists_ptr));
