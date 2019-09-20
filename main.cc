@@ -207,7 +207,7 @@ int main(int argc, const char* argv[]) {
     print_jets(jets);
 
     std::cout << std::defaultfloat;
-    std::cout << "clustered " << particles.size() << " into " << jets.size() << " jets above " << ptmin << " GeV";
+    std::cout << "clustered " << particles.size() << " particles into " << jets.size() << " jets above " << ptmin << " GeV";
     std::cout << std::fixed;
     double mean = sum / repetitions;
     int precision;
