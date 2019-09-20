@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <iomanip>
@@ -64,6 +65,7 @@ bool read_next_event(std::istream& input, std::vector<PseudoJet> & particles) {
 }
 
 void print_jets(std::vector<PseudoJet> const& jets) {
+    std::cout << std::fixed << std::setprecision(4);
     for (auto const& jet: jets) {
       std::cout << std::setw(16) << jet.px << std::setw(16) << jet.py << std::setw(16) << jet.pz << std::setw(16) << jet.E << std::endl;
     }
@@ -139,15 +141,21 @@ int main(int argc, const char* argv[]) {
     cudaCheck(cudaEventCreate(&start));
     cudaCheck(cudaEventCreate(&stop));
 
+    double sum = 0.;
+    double sum2 = 0.;
     for (int step = 0; repetitions == 0 or step < repetitions; ++step) {
+      // run the clustering algorithm and measure its running time
       cudaCheck(cudaEventRecord(start));
       cluster(particles_d, particles.size());
       cudaCheck(cudaEventRecord(stop));
       cudaCheck(cudaEventSynchronize(stop));
 
-      float milliseconds = 0;
+      float milliseconds;
       cudaCheck(cudaEventElapsedTime(&milliseconds, start, stop));
+      sum += milliseconds;
+      sum2 += milliseconds * milliseconds;
 
+      // copy the clustered jets back to the CPU
       jets.resize(particles.size());
       cudaCheck(cudaMemcpy(jets.data(), particles_d, sizeof(PseudoJet) * jets.size(), cudaMemcpyDefault));
 
@@ -175,6 +183,14 @@ int main(int argc, const char* argv[]) {
     cudaCheck(cudaFree(particles_d));
 
     print_jets(jets);
+
+    double mean  = sum / repetitions;
+    double sigma = std::sqrt((sum2 - sum * sum / repetitions) / (repetitions - 1));
+    auto precision = std::cout.precision( std::max((int) -std::log10(sigma/2), 0) );
+    std::cout << std::fixed;
+    std::cout << "found " << jets.size() << " jets above " << ptmin << " GeV in " << mean << " +/- " << sigma << " ms" << std::endl;
+    std::cout.precision(precision);
+    std::cout << std::defaultfloat;
   }
 
   return 0;
