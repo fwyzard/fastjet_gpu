@@ -132,10 +132,9 @@ int main(int argc, const char* argv[]) {
   while (read_next_event(std::cin, particles)) {
     std::cout << "found " << particles.size() << " particles" << std::endl;
 
-    // allocate GPU memory and copy the input particles
+    // allocate GPU memory for the input particles
     PseudoJet * particles_d;
     cudaCheck(cudaMalloc(&particles_d, sizeof(PseudoJet) * particles.size()));
-    cudaCheck(cudaMemcpy(particles_d, particles.data(), sizeof(PseudoJet) * particles.size(), cudaMemcpyDefault));
 
     cudaEvent_t start, stop;
     cudaCheck(cudaEventCreate(&start));
@@ -144,6 +143,9 @@ int main(int argc, const char* argv[]) {
     double sum = 0.;
     double sum2 = 0.;
     for (int step = 0; repetitions == 0 or step < repetitions; ++step) {
+      // copy the input to the GPU
+      cudaCheck(cudaMemcpy(particles_d, particles.data(), sizeof(PseudoJet) * particles.size(), cudaMemcpyDefault));
+
       // run the clustering algorithm and measure its running time
       cudaCheck(cudaEventRecord(start));
       cluster(particles_d, particles.size());
