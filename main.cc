@@ -65,7 +65,7 @@ bool read_next_event(std::istream& input, std::vector<PseudoJet> & particles) {
 }
 
 void print_jets(std::vector<PseudoJet> const& jets) {
-    std::cout << std::fixed << std::setprecision(4);
+    std::cout << std::fixed << std::setprecision(6);
     for (auto const& jet: jets) {
       std::cout << std::setw(16) << jet.px << std::setw(16) << jet.py << std::setw(16) << jet.pz << std::setw(16) << jet.E << std::endl;
     }
@@ -188,9 +188,12 @@ int main(int argc, const char* argv[]) {
 
     double mean  = sum / repetitions;
     double sigma = std::sqrt((sum2 - sum * sum / repetitions) / (repetitions - 1));
-    auto precision = std::cout.precision( std::max((int) -std::log10(sigma/2), 0) );
+    int precision = std::max((int) -std::log10(sigma / 2.) + 1, 0);
+    std::cout << std::defaultfloat;
+    std::cout << "clustered " << particles.size() << " into " << jets.size() << " jets above " << ptmin << " GeV";
+    precision = std::cout.precision(precision);
     std::cout << std::fixed;
-    std::cout << "found " << jets.size() << " jets above " << ptmin << " GeV in " << mean << " +/- " << sigma << " ms" << std::endl;
+    std::cout << " in " << mean << " +/- " << sigma << " ms" << std::endl;
     std::cout.precision(precision);
     std::cout << std::defaultfloat;
   }
