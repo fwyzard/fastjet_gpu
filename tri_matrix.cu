@@ -1,21 +1,21 @@
-#include <assert.h>
+#include <cassert>
 #include <cmath>
-#include <cub/block/block_reduce.cuh>
 #include <iostream>
 #include <limits>
 #include <numeric>
 #include <stdio.h>
 #include <vector>
-// Here you can set the device ID that was assigned to you
-#define MYDEVICE 0
-#define OUTPUT_JETS false 
-#define BENCH !OUTPUT_JETS
 
-// Simple utility function to check for CUDA runtime errors
-void checkCUDAError(const char *msg);
+#include <cuda_runtime.h>
+#include <cub/block/block_reduce.cuh>
+
+#include "PseudoJet.h"
+#include "cluster.h"
+
+using namespace std;
+using namespace cub;
 
 unsigned int upper_power_of_two(int v) {
-
   v |= v >> 1;
   v |= v >> 2;
   v |= v >> 4;
@@ -25,10 +25,7 @@ unsigned int upper_power_of_two(int v) {
   return v;
 }
 
-using namespace std;
-using namespace cub;
-
-struct PseudoJet {
+struct PseudoJetExt {
   double px;
   double py;
   double pz;
@@ -50,12 +47,8 @@ const double R = 0.4;
 const double R2 = R * R;
 const double invR2 = 1.0 / R2;
 const double MAX_DOUBLE = 1.79769e+308;
-#if OUTPUT_JETS
-const double ptmin = 1.0;
-const double dcut = ptmin * ptmin;
-#endif
 
-__device__ void _set_jet(PseudoJet &jet) {
+__device__ void _set_jet(PseudoJetExt &jet) {
   jet.diB = jet.px * jet.px + jet.py * jet.py;
   jet.isJet = false;
 
@@ -96,7 +89,7 @@ __device__ void _set_jet(PseudoJet &jet) {
   }
 }
 
-__device__ double plain_distance(PseudoJet &jet1, PseudoJet &jet2) {
+__device__ double plain_distance(PseudoJetExt &jet1, PseudoJetExt &jet2) {
   double dphi = abs(jet1.phi - jet2.phi);
   if (dphi > pi) {
     dphi = twopi - dphi;
@@ -105,7 +98,7 @@ __device__ double plain_distance(PseudoJet &jet1, PseudoJet &jet2) {
   return (dphi * dphi + drap * drap);
 }
 
-__device__ double yij_distance(PseudoJet &jet1, PseudoJet &jet2) {
+__device__ double yij_distance(PseudoJetExt &jet1, PseudoJetExt &jet2) {
   return min(jet1.get_diB(), jet2.get_diB()) * plain_distance(jet1, jet2) *
          invR2;
 }
@@ -118,7 +111,7 @@ __device__ void tid_to_ij(int &i, int &j, int tid) {
   i -= 1;
 }
 
-__global__ void set_jets(PseudoJet *jets) {
+__global__ void set_jets(PseudoJetExt *jets) {
   int tid = blockDim.x * blockIdx.x + threadIdx.x;
   _set_jet(jets[tid]);
 }
@@ -135,7 +128,7 @@ struct dist_compare {
   }
 };
 
-__global__ void reduction_min(PseudoJet *jets, Dist *distances_out,
+__global__ void reduction_min(PseudoJetExt *jets, Dist *distances_out,
                               int const distances_array_size,
                               int const num_particles) {
   // Specialize BlockReduce type for our thread block
@@ -165,7 +158,7 @@ __global__ void reduction_min(PseudoJet *jets, Dist *distances_out,
   }
 }
 
-__global__ void reduction_blocks(PseudoJet *jets, Dist *distances_out,
+__global__ void reduction_blocks(PseudoJetExt *jets, Dist *distances_out,
                                  int const distances_array_size,
                                  int const num_particles) {
   // Specialize BlockReduce type for our thread block
@@ -197,7 +190,7 @@ __global__ void reduction_blocks(PseudoJet *jets, Dist *distances_out,
     // printf("%4d%4d%4d%20.8e\n", num_particles, f, e, distances[58101]);
 
     if (i == j) {
-      PseudoJet temp;
+      PseudoJetExt temp;
       temp = jets[j];
       jets[j] = jets[num_particles - 1];
       temp.isJet = true;
@@ -214,142 +207,68 @@ __global__ void reduction_blocks(PseudoJet *jets, Dist *distances_out,
   }
 }
 
-int main() {
-  cudaSetDevice(0);
-  cudaDeviceProp prop;
-  cudaGetDeviceProperties(&prop, 0);
 
-  printf("Device Name: %s\n", prop.name);
+__global__
+void init(const PseudoJet *particles, PseudoJetExt *jets, int size) {
+  int first = threadIdx.x + blockIdx.x * blockDim.x;
+  int grid = blockDim.x * gridDim.x;
 
-  int num_particles = 0;
-  // Increase the number to process more events
-  int num_events = 1;
-
-  // Loop events
-  for (int event = 0; event < num_events; event++) {
-    PseudoJet *h_jets = NULL;
-    PseudoJet *h_more_jets = NULL;
-    PseudoJet temp;
-
-    // Read particles
-    num_particles = 0;
-    while (true) {
-      cin >> temp.px >> temp.py >> temp.pz >> temp.E;
-
-      if (cin.fail())
-        break;
-
-      num_particles++;
-
-      h_more_jets =
-          (PseudoJet *)realloc(h_jets, num_particles * sizeof(PseudoJet));
-
-      if (h_more_jets != NULL) {
-        h_jets = h_more_jets;
-        h_jets[num_particles - 1] = temp;
-      } else {
-        free(h_jets);
-        puts("Error (re)allocating memory");
-        exit(1);
-      }
-    }
-
-    cin.clear();
-    cin.ignore(numeric_limits<streamsize>::max(), '\n');
-
-    // Timing
-    cudaEvent_t start, stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
-
-#pragma regoin CudaMalloc
-    PseudoJet *d_jets = 0;
-    cudaMalloc((void **)&d_jets, num_particles * sizeof(PseudoJet));
-    cudaMemcpy(d_jets, h_jets, num_particles * sizeof(PseudoJet),
-               cudaMemcpyHostToDevice);
-
-    int num_threads = num_particles;
-    int num_blocks = (num_particles + num_threads) / (num_threads + 1);
-
-    Dist *d_out = 0;
-    cudaMalloc((void **)&d_out, num_threads * sizeof(Dist));
-#pragma endregoin
-
-// Benchmarking
-#if BENCH
-    float milliseconds;
-    vector<double> acc;
-    for (int s = 0; s < 1000; s++) {
-      cudaEventRecord(start);
-#endif
-      // Compute dIB, eta, phi for each jet
-      set_jets<<<num_blocks, num_threads>>>(d_jets);
-
-      // Loop n times reduce + recombine
-      for (int n = num_particles; n > 0; n--) {
-        num_threads = (n * (n + 1) / 2);
-        num_blocks = (num_threads / 1024) + 1;
-
-        // Find the minimum in each block for the distances array
-        reduction_min<<<num_blocks, 1024, 1024 * sizeof(Dist)>>>(
-            d_jets, d_out, num_threads, n);
-
-        // // Find the minimum of all blocks
-        int b = upper_power_of_two(num_blocks - 1) + 1;
-        // cout << num_blocks << "\t" << b + 1 << endl;
-        reduction_blocks<<<1, 1024, 1024 * sizeof(Dist)>>>(d_jets, d_out, num_blocks,
-                                                     n);
-      }
-#if BENCH
-      cudaEventRecord(stop);
-      cudaEventSynchronize(stop);
-
-      cudaEventElapsedTime(&milliseconds, start, stop);
-      printf("run %d\t%.3fms\n", s, milliseconds);
-      acc.push_back(milliseconds);
-    }
-
-    double sum = std::accumulate(acc.begin(), acc.end(), 0.0);
-    double mean = sum / acc.size();
-
-    double sq_sum =
-        std::inner_product(acc.begin(), acc.end(), acc.begin(), 0.0);
-    double stdev = std::sqrt(sq_sum / acc.size() - mean * mean);
-    printf("n =  %d\n", num_particles);
-    printf("mean %.3fms\n", mean);
-    printf("std %.3fms\n", stdev);
-#endif
-
-    checkCUDAError("kernal launch");
-
-#if OUTPUT_JETS
-    cudaMemcpy(h_jets, d_jets, num_particles * sizeof(PseudoJet),
-               cudaMemcpyDeviceToHost);
-
-    for (int i = 0; i < num_particles; i++)
-      if (h_jets[i].diB >= dcut && h_jets[i].isJet)
-        printf("%15.8f %15.8f %15.8f %15.8f\n", h_jets[i].px, h_jets[i].py,
-               h_jets[i].pz, h_jets[i].E);
-#endif
-
-    // free device memory
-    cudaFree(d_jets);
-    // cudaFree(d_distances);
-    // cudaFree(d_indices);
-    // cudaFree(d_indices_ii);
-    // cudaFree(d_indices_jj);
-    cudaFree(d_out);
-
-    free(h_jets);
+  for (int i = first; i < size; i += grid) {
+    jets[i].px = particles[i].px;
+    jets[i].py = particles[i].py;
+    jets[i].pz = particles[i].pz;
+    jets[i].E  = particles[i].E;
+    _set_jet(jets[i]);
   }
-
-  return 0;
 }
 
-void checkCUDAError(const char *msg) {
-  cudaError_t err = cudaGetLastError();
-  if (cudaSuccess != err) {
-    fprintf(stderr, "Cuda error: %s: %s.\n", msg, cudaGetErrorString(err));
-    exit(-1);
+__global__
+void output(const PseudoJetExt *jets, PseudoJet *particles, int size) {
+  int first = threadIdx.x + blockIdx.x * blockDim.x;
+  int grid = blockDim.x * gridDim.x;
+
+  for (int i = first; i < size; i += grid) {
+    particles[i].px     = jets[i].px;
+    particles[i].py     = jets[i].py;
+    particles[i].pz     = jets[i].pz;
+    particles[i].E      = jets[i].E;
+    particles[i].index  = i;
+    particles[i].isJet  = jets[i].isJet;
   }
+}
+
+
+void cluster(PseudoJet *particles, int size) {
+
+#pragma regoin CudaMalloc
+  PseudoJetExt *d_jets;
+  cudaMalloc(&d_jets, size * sizeof(PseudoJetExt));
+  init<<<8, 512>>>(particles, d_jets, size);
+
+  Dist *d_out = 0;
+  cudaMalloc((void **)&d_out, size * sizeof(Dist));
+#pragma endregoin
+
+  int num_threads = size;
+  int num_blocks = (size + num_threads) / (num_threads + 1);
+
+  // Compute dIB, eta, phi for each jet
+  set_jets<<<num_blocks, num_threads>>>(d_jets);
+
+  // Loop n times reduce + recombine
+  for (int n = size; n > 0; n--) {
+    num_threads = (n * (n + 1) / 2);
+    num_blocks = (num_threads / 1024) + 1;
+
+    // Find the minimum in each block for the distances array
+    reduction_min<<<num_blocks, 1024, 1024 * sizeof(Dist)>>>(
+        d_jets, d_out, num_threads, n);
+
+    // // Find the minimum of all blocks
+    int b = upper_power_of_two(num_blocks - 1) + 1;
+    // cout << num_blocks << "\t" << b + 1 << endl;
+    reduction_blocks<<<1, 1024, 1024 * sizeof(Dist)>>>(d_jets, d_out, num_blocks, n);
+  }
+
+  output<<<8, 512>>>(d_jets, particles, size);
 }
