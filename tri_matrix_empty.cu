@@ -36,9 +36,7 @@ struct PseudoJetExt {
   double rap;
   bool isJet;
 
-  __host__ __device__ double get_diB() const {
-    return diB > 1e-300 ? 1.0 / diB : 1e300;
-  }
+  __host__ __device__ double get_diB() const { return diB > 1e-300 ? 1.0 / diB : 1e300; }
 };
 
 const double pi = 3.141592653589793238462643383279502884197;
@@ -60,7 +58,7 @@ __device__ void _set_jet(PseudoJetExt &jet) {
   }
   if (jet.phi >= twopi) {
     jet.phi -= twopi;
-  } // can happen if phi=-|eps<1e-15|?
+  }  // can happen if phi=-|eps<1e-15|?
   if (jet.E == abs(jet.pz) && jet.diB == 0) {
     // Point has infinite rapidity -- convert that into a very large
     // number, but in such a way that different 0-pt momenta will have
@@ -76,9 +74,8 @@ __device__ void _set_jet(PseudoJetExt &jet) {
     // get the rapidity in a way that's modestly insensitive to roundoff
     // error when things pz,E are large (actually the best we can do without
     // explicit knowledge of mass)
-    double effective_m2 = max(0.0, (jet.E + jet.pz) * (jet.E - jet.pz) -
-                                       jet.diB); // force non tachyonic mass
-    double E_plus_pz = jet.E + abs(jet.pz);      // the safer of p+, p-
+    double effective_m2 = max(0.0, (jet.E + jet.pz) * (jet.E - jet.pz) - jet.diB);  // force non tachyonic mass
+    double E_plus_pz = jet.E + abs(jet.pz);                                         // the safer of p+, p-
     // p+/p- = (p+ p-) / (p-)^2 = (kt^2+m^2)/(p-)^2
     jet.rap = 0.5 * log((jet.diB + effective_m2) / (E_plus_pz * E_plus_pz));
     if (jet.pz > 0) {
@@ -120,14 +117,14 @@ struct Dist {
 };
 
 struct dist_compare {
-  __host__ __device__ Dist operator()(Dist &first, Dist &second) {
-    return first.d < second.d ? first : second;
-  }
+  __host__ __device__ Dist operator()(Dist &first, Dist &second) { return first.d < second.d ? first : second; }
 };
 
-__global__ void reduction_min(PseudoJetExt *jets, Dist *distances_out,
+__global__ void reduction_min(PseudoJetExt *jets,
+                              Dist *distances_out,
                               int const distances_array_size,
-                              int const num_particles, double one_over_r2) {
+                              int const num_particles,
+                              double one_over_r2) {
 #if 0
   // Specialize BlockReduce type for our thread block
   typedef BlockReduce<Dist, 1024> BlockReduceT;
@@ -157,7 +154,8 @@ __global__ void reduction_min(PseudoJetExt *jets, Dist *distances_out,
 #endif
 }
 
-__global__ void reduction_blocks(PseudoJetExt *jets, Dist *distances_out,
+__global__ void reduction_blocks(PseudoJetExt *jets,
+                                 Dist *distances_out,
                                  int const distances_array_size,
                                  int const num_particles) {
 #if 0
@@ -208,9 +206,7 @@ __global__ void reduction_blocks(PseudoJetExt *jets, Dist *distances_out,
 #endif
 }
 
-
-__global__
-void init(const PseudoJet *particles, PseudoJetExt *jets, int size) {
+__global__ void init(const PseudoJet *particles, PseudoJetExt *jets, int size) {
   int first = threadIdx.x + blockIdx.x * blockDim.x;
   int grid = blockDim.x * gridDim.x;
 
@@ -218,29 +214,26 @@ void init(const PseudoJet *particles, PseudoJetExt *jets, int size) {
     jets[i].px = particles[i].px;
     jets[i].py = particles[i].py;
     jets[i].pz = particles[i].pz;
-    jets[i].E  = particles[i].E;
+    jets[i].E = particles[i].E;
     _set_jet(jets[i]);
   }
 }
 
-__global__
-void output(const PseudoJetExt *jets, PseudoJet *particles, int size) {
+__global__ void output(const PseudoJetExt *jets, PseudoJet *particles, int size) {
   int first = threadIdx.x + blockIdx.x * blockDim.x;
   int grid = blockDim.x * gridDim.x;
 
   for (int i = first; i < size; i += grid) {
-    particles[i].px     = jets[i].px;
-    particles[i].py     = jets[i].py;
-    particles[i].pz     = jets[i].pz;
-    particles[i].E      = jets[i].E;
-    particles[i].index  = i;
-    particles[i].isJet  = jets[i].isJet;
+    particles[i].px = jets[i].px;
+    particles[i].py = jets[i].py;
+    particles[i].pz = jets[i].pz;
+    particles[i].E = jets[i].E;
+    particles[i].index = i;
+    particles[i].isJet = jets[i].isJet;
   }
 }
 
-
 void cluster(PseudoJet *particles, int size, double r) {
-
 #pragma regoin CudaMalloc
   PseudoJetExt *d_jets;
   cudaCheck(cudaMalloc(&d_jets, size * sizeof(PseudoJetExt)));
@@ -263,8 +256,7 @@ void cluster(PseudoJet *particles, int size, double r) {
     num_blocks = (num_threads / 1024) + 1;
 
     // Find the minimum in each block for the distances array
-    reduction_min<<<num_blocks, 1024, 1024 * sizeof(Dist)>>>(
-        d_jets, d_out, num_threads, n, one_over_r2);
+    reduction_min<<<num_blocks, 1024, 1024 * sizeof(Dist)>>>(d_jets, d_out, num_threads, n, one_over_r2);
 
     // // Find the minimum of all blocks
     int b = upper_power_of_two(num_blocks - 1) + 1;

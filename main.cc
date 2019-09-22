@@ -15,7 +15,6 @@
 #include "cluster.h"
 #include "cudaCheck.h"
 
-
 void initialise() {
   cudaSetDevice(0);
   cudaDeviceProp prop;
@@ -23,8 +22,7 @@ void initialise() {
   std::cout << "Running on CUDA device " << prop.name << std::endl;
 }
 
-
-bool read_next_event(std::istream& input, std::vector<PseudoJet> & particles) {
+bool read_next_event(std::istream& input, std::vector<PseudoJet>& particles) {
   // clear the output buffer
   particles.clear();
 
@@ -37,7 +35,7 @@ bool read_next_event(std::istream& input, std::vector<PseudoJet> & particles) {
   }
 
   // read the input one line at a time
-  int i = 0; 
+  int i = 0;
   std::string buffer;
   while (std::getline(input, buffer).good()) {
     std::istringstream line(buffer);
@@ -65,17 +63,17 @@ bool read_next_event(std::istream& input, std::vector<PseudoJet> & particles) {
 }
 
 void print_jets(std::vector<PseudoJet> const& jets) {
-    std::cout << std::fixed << std::setprecision(6);
-    for (auto const& jet: jets) {
-      std::cout << std::setw(16) << jet.px << std::setw(16) << jet.py << std::setw(16) << jet.pz << std::setw(16) << jet.E << std::endl;
-    }
-    std::cout << std::endl;
+  std::cout << std::fixed << std::setprecision(6);
+  for (auto const& jet : jets) {
+    std::cout << std::setw(16) << jet.px << std::setw(16) << jet.py << std::setw(16) << jet.pz << std::setw(16) << jet.E
+              << std::endl;
+  }
+  std::cout << std::endl;
 }
 
-
 int main(int argc, const char* argv[]) {
-  double ptmin = 0.0;   // GeV
-  double r = 1.0;       // clustering radius
+  double ptmin = 0.0;  // GeV
+  double r = 1.0;      // clustering radius
   bool sort = true;
   int repetitions = 1;
 
@@ -97,8 +95,8 @@ int main(int argc, const char* argv[]) {
       }
     } else
 
-    // -r, -R
-    if (std::strcmp(argv[i], "-r") == 0 or std::strcmp(argv[i], "-R") == 0) {
+        // -r, -R
+        if (std::strcmp(argv[i], "-r") == 0 or std::strcmp(argv[i], "-R") == 0) {
       ++i;
       if (i >= argc) {
         // error
@@ -114,8 +112,8 @@ int main(int argc, const char* argv[]) {
       }
     } else
 
-    // --repeat, -repeat
-    if (std::strcmp(argv[i], "--repeat") == 0 or std::strcmp(argv[i], "-repeat") == 0) {
+        // --repeat, -repeat
+        if (std::strcmp(argv[i], "--repeat") == 0 or std::strcmp(argv[i], "-repeat") == 0) {
       ++i;
       if (i >= argc) {
         // error
@@ -131,8 +129,8 @@ int main(int argc, const char* argv[]) {
       }
     } else
 
-    // --sort, -s
-    if (std::strcmp(argv[i], "--sort") == 0 or std::strcmp(argv[i], "-s") == 0) {
+        // --sort, -s
+        if (std::strcmp(argv[i], "--sort") == 0 or std::strcmp(argv[i], "-s") == 0) {
       sort = true;
     } else
 
@@ -143,7 +141,6 @@ int main(int argc, const char* argv[]) {
     }
   }
 
-
   std::vector<PseudoJet> particles;
   std::vector<PseudoJet> jets;
 
@@ -151,7 +148,7 @@ int main(int argc, const char* argv[]) {
     std::cout << "found " << particles.size() << " particles" << std::endl;
 
     // allocate GPU memory for the input particles
-    PseudoJet * particles_d;
+    PseudoJet* particles_d;
     cudaCheck(cudaMalloc(&particles_d, sizeof(PseudoJet) * particles.size()));
 
     cudaEvent_t start, stop;
@@ -182,17 +179,18 @@ int main(int argc, const char* argv[]) {
       sum2 += milliseconds * milliseconds;
 
       // remove the unused elements and the jets with pT < pTmin
-      auto last = std::remove_if(jets.begin(), jets.end(), [ptmin](auto const& jet){
+      auto last = std::remove_if(jets.begin(), jets.end(), [ptmin](auto const& jet) {
         return (not jet.isJet) or (jet.px * jet.px + jet.py * jet.py < ptmin * ptmin);
       });
       jets.erase(last, jets.end());
 
       if (ptmin > 0.) {
-        std::cout << "found " << jets.size() << " jets above " << ptmin << " GeV in " << milliseconds << " ms" << std::endl;
+        std::cout << "found " << jets.size() << " jets above " << ptmin << " GeV in " << milliseconds << " ms"
+                  << std::endl;
       } else {
         std::cout << "found " << jets.size() << " jets in " << milliseconds << " ms" << std::endl;
       }
-    
+
       // optionally, sort the jets by decreasing pT
       if (sort) {
         std::sort(jets.begin(), jets.end(), [](auto const& a, auto const& b) {
@@ -207,13 +205,14 @@ int main(int argc, const char* argv[]) {
     print_jets(jets);
 
     std::cout << std::defaultfloat;
-    std::cout << "clustered " << particles.size() << " particles into " << jets.size() << " jets above " << ptmin << " GeV";
+    std::cout << "clustered " << particles.size() << " particles into " << jets.size() << " jets above " << ptmin
+              << " GeV";
     std::cout << std::fixed;
     double mean = sum / repetitions;
     int precision;
     if (repetitions > 1) {
       double sigma = std::sqrt((sum2 - sum * sum / repetitions) / (repetitions - 1));
-      precision = std::max((int) -std::log10(sigma / 2.) + 1, 0);
+      precision = std::max((int)-std::log10(sigma / 2.) + 1, 0);
       precision = std::cout.precision(precision);
       std::cout << " in " << mean << " +/- " << sigma << " ms" << std::endl;
     } else {

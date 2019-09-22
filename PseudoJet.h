@@ -10,4 +10,4 @@ struct PseudoJet {
   double E;
 };
 
-#endif //  PseudoJet_h
+#endif  //  PseudoJet_h

@@ -27,9 +27,7 @@ struct Dist {
   int j;
 };
 
-__host__ __device__ void print_distance(Dist d) {
-  printf("%4d%4d%20.8e\n", d.i, d.j, d.distance);
-}
+__host__ __device__ void print_distance(Dist d) { printf("%4d%4d%20.8e\n", d.i, d.j, d.distance); }
 
 __device__ double plain_distance(EtaPhi &p1, EtaPhi &p2) {
   double dphi = abs(p1.phi - p2.phi);
@@ -53,8 +51,7 @@ __device__ Dist yij_distance(EtaPhi *points, int i, int j, double one_over_r2) {
   if (i == j)
     d.distance = points[i].diB;
   else
-    d.distance = min(points[i].diB, points[j].diB) *
-                 plain_distance(points[i], points[j]) * one_over_r2;
+    d.distance = min(points[i].diB, points[j].diB) * plain_distance(points[i], points[j]) * one_over_r2;
 
   return d;
 }
@@ -75,7 +72,7 @@ __host__ __device__ EtaPhi _set_jet(PseudoJet &jet) {
   }
   if (point.phi >= twopi) {
     point.phi -= twopi;
-  } // can happen if phi=-|eps<1e-15|?
+  }  // can happen if phi=-|eps<1e-15|?
   if (jet.E == abs(jet.pz) && point.diB == 0) {
     // Point has infinite rapidity -- convert that into a very large
     // number, but in such a way that different 0-pt momenta will have
@@ -91,9 +88,8 @@ __host__ __device__ EtaPhi _set_jet(PseudoJet &jet) {
     // get the rapidity in a way that's modestly insensitive to roundoff
     // error when things pz,E are large (actually the best we can do without
     // explicit knowledge of mass)
-    double effective_m2 = max(0.0, (jet.E + jet.pz) * (jet.E - jet.pz) -
-                                       point.diB); // force non tachyonic mass
-    double E_plus_pz = jet.E + abs(jet.pz);        // the safer of p+, p-
+    double effective_m2 = max(0.0, (jet.E + jet.pz) * (jet.E - jet.pz) - point.diB);  // force non tachyonic mass
+    double E_plus_pz = jet.E + abs(jet.pz);                                           // the safer of p+, p-
     // p+/p- = (p+ p-) / (p-)^2 = (kt^2+m^2)/(p-)^2
     point.eta = 0.5 * log((point.diB + effective_m2) / (E_plus_pz * E_plus_pz));
     if (jet.pz > 0) {
@@ -151,8 +147,7 @@ __global__ void set_distances(EtaPhi *points, Dist *min_dists, double one_over_r
   }
 }
 
-__global__ void fastjet(PseudoJet *jets, EtaPhi *points, Dist *dists,
-                        Dist *min_dists, int n, double one_over_r2) {
+__global__ void fastjet(PseudoJet *jets, EtaPhi *points, Dist *dists, Dist *min_dists, int n, double one_over_r2) {
   extern __shared__ Dist sdata[];
 
   int tid = threadIdx.x;
@@ -232,7 +227,6 @@ __global__ void fastjet(PseudoJet *jets, EtaPhi *points, Dist *dists,
     // // recombine
     min = sdata[0];
     if (tid == 0) {
-
       PseudoJet jet_i, jet_j;
 
       EtaPhi p1, p2;
@@ -384,23 +378,23 @@ __global__ void fastjet(PseudoJet *jets, EtaPhi *points, Dist *dists,
 }
 
 void cluster(PseudoJet *particles, int size, double r) {
-    EtaPhi *d_points_ptr;
-    cudaCheck(cudaMalloc(&d_points_ptr, sizeof(EtaPhi) * size));
+  EtaPhi *d_points_ptr;
+  cudaCheck(cudaMalloc(&d_points_ptr, sizeof(EtaPhi) * size));
 
-    Dist *d_dists_ptr;
-    cudaCheck(cudaMalloc(&d_dists_ptr, sizeof(Dist) * size * (size + 1) / 2));
+  Dist *d_dists_ptr;
+  cudaCheck(cudaMalloc(&d_dists_ptr, sizeof(Dist) * size * (size + 1) / 2));
 
-    Dist *d_min_dists_ptr;
-    cudaCheck(cudaMalloc(&d_min_dists_ptr, sizeof(Dist) * size));
+  Dist *d_min_dists_ptr;
+  cudaCheck(cudaMalloc(&d_min_dists_ptr, sizeof(Dist) * size));
 
-    set_points<<<1, size>>>(particles, d_points_ptr);
+  set_points<<<1, size>>>(particles, d_points_ptr);
 
-    const double one_over_r2 = 1. / (r * r);
-    set_distances<<<size, 512, sizeof(Dist) * size>>>(d_points_ptr, d_min_dists_ptr, one_over_r2);
+  const double one_over_r2 = 1. / (r * r);
+  set_distances<<<size, 512, sizeof(Dist) * size>>>(d_points_ptr, d_min_dists_ptr, one_over_r2);
 
-    fastjet<<<1, 1024, (sizeof(Dist) * size)>>>(particles, d_points_ptr, d_dists_ptr, d_min_dists_ptr, size, one_over_r2);
+  fastjet<<<1, 1024, (sizeof(Dist) * size)>>>(particles, d_points_ptr, d_dists_ptr, d_min_dists_ptr, size, one_over_r2);
 
-    cudaCheck(cudaFree(d_points_ptr));
-    cudaCheck(cudaFree(d_dists_ptr));
-    cudaCheck(cudaFree(d_min_dists_ptr));
+  cudaCheck(cudaFree(d_points_ptr));
+  cudaCheck(cudaFree(d_dists_ptr));
+  cudaCheck(cudaFree(d_min_dists_ptr));
 }
