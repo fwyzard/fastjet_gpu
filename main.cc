@@ -20,6 +20,9 @@ void initialise() {
   cudaDeviceProp prop;
   cudaGetDeviceProperties(&prop, 0);
   std::cout << "Running on CUDA device " << prop.name << std::endl;
+  int value;
+  cudaDeviceGetAttribute(&value, cudaDevAttrMaxSharedMemoryPerBlock, 0);
+  std::cout << "  - maximum shared memory per block: " << value / 1024 << " kB" << std::endl;
 }
 
 bool read_next_event(std::istream& input, std::vector<PseudoJet>& particles) {
@@ -76,6 +79,8 @@ int main(int argc, const char* argv[]) {
   double r = 1.0;      // clustering radius
   bool sort = true;
   int repetitions = 1;
+
+  initialise();
 
   for (unsigned int i = 1; i < argc; ++i) {
     // --ptmin, -p
@@ -194,7 +199,7 @@ int main(int argc, const char* argv[]) {
       // optionally, sort the jets by decreasing pT
       if (sort) {
         std::sort(jets.begin(), jets.end(), [](auto const& a, auto const& b) {
-          return (a.px * a.px + a.py * a.py < b.px * b.px + b.py * b.py);
+          return (a.px * a.px + a.py * a.py > b.px * b.px + b.py * b.py);
         });
       }
     }
