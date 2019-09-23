@@ -13,6 +13,13 @@ const double MaxRap = 1e5;
 #pragma endregion
 
 #pragma region struct
+template <typename T>
+__host__ __device__
+inline void swap(T& a, T& b) {
+  auto t = std::move(a);
+  a = std::move(b);
+  b = std::move(t);
+}
 
 using GridIndexType     = int;
 using ParticleIndexType = int;
@@ -133,9 +140,7 @@ __device__ double safe_inverse(double x) {
 
 __device__ Dist yij_distance(const EtaPhi *points, ParticleIndexType i, ParticleIndexType j, Scheme scheme, double one_over_r2) {
   if (i > j) {
-    auto t = i;
-    i = j;
-    j = t;
+    ::swap(i, j);
   }
 
   Dist d;
@@ -394,9 +399,7 @@ __global__ void reduce_recombine(
         }
 
         if (min.i > min.j) {
-          auto t = min.i;
-          min.i = min.j;
-          min.j = t;
+          ::swap(min.i, min.j);
         }
 
         min_dists[tid] = min;
