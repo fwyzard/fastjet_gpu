@@ -36,13 +36,28 @@ struct PseudoJetExt {
   double rap;
   bool isJet;
 
-  __host__ __device__ double get_diB() const { return diB > 1e-300 ? 1.0 / diB : 1e300; }
+  __host__ __device__ double get_diB(Scheme scheme) const {
+    switch (scheme) {
+      case Scheme::Kt:
+        return diB;
+
+      case Scheme::CambridgeAachen:
+        return 1.;
+
+      case Scheme::AntiKt:
+        return diB > 1e-300 ? 1.0 / diB : 1e300;
+    }
+    // never reached
+    return diB;
+  }
 };
 
 const double pi = 3.141592653589793238462643383279502884197;
 const double twopi = 6.283185307179586476925286766559005768394;
 const double MaxRap = 1e5;
-//const double MAX_DOUBLE = 1.79769e+308;
+#if 0
+const double MAX_DOUBLE = 1.79769e+308;
+#endif
 
 __device__ void _set_jet(PseudoJetExt &jet) {
   jet.diB = jet.px * jet.px + jet.py * jet.py;
@@ -93,8 +108,8 @@ __device__ double plain_distance(PseudoJetExt &jet1, PseudoJetExt &jet2) {
   return (dphi * dphi + drap * drap);
 }
 
-__device__ double yij_distance(PseudoJetExt &jet1, PseudoJetExt &jet2, double one_over_r2) {
-  return min(jet1.get_diB(), jet2.get_diB()) * plain_distance(jet1, jet2) * one_over_r2;
+__device__ double yij_distance(PseudoJetExt &jet1, PseudoJetExt &jet2, Scheme scheme, double one_over_r2) {
+  return min(jet1.get_diB(scheme), jet2.get_diB(scheme)) * plain_distance(jet1, jet2) * one_over_r2;
 }
 
 __device__ void tid_to_ij(int &i, int &j, int tid) {
@@ -106,8 +121,10 @@ __device__ void tid_to_ij(int &i, int &j, int tid) {
 }
 
 __global__ void set_jets(PseudoJetExt *jets) {
+#if 0
   int tid = blockDim.x * blockIdx.x + threadIdx.x;
   _set_jet(jets[tid]);
+#endif
 }
 
 struct Dist {
@@ -124,6 +141,7 @@ __global__ void reduction_min(PseudoJetExt *jets,
                               Dist *distances_out,
                               int const distances_array_size,
                               int const num_particles,
+                              Scheme scheme,
                               double one_over_r2) {
 #if 0
   // Specialize BlockReduce type for our thread block
@@ -136,13 +154,12 @@ __global__ void reduction_min(PseudoJetExt *jets,
   Dist dst;
   tid_to_ij(dst.i, dst.j, tid);
 
-  if (tid >= distances_array_size || dst.j >= num_particles ||
-      dst.i >= num_particles) {
+  if (tid >= distances_array_size || dst.j >= num_particles || dst.i >= num_particles) {
     dst.d = MAX_DOUBLE;
   } else if (dst.i == dst.j) {
-    dst.d = jets[dst.i].get_diB();
+    dst.d = jets[dst.i].get_diB(scheme);
   } else {
-    dst.d = yij_distance(jets[dst.i], jets[dst.j], one_over_r2);
+    dst.d = yij_distance(jets[dst.i], jets[dst.j], scheme, one_over_r2);
   }
 
   Dist min = BlockReduceT(sdata).Reduce(dst, dist_compare());
@@ -207,6 +224,7 @@ __global__ void reduction_blocks(PseudoJetExt *jets,
 }
 
 __global__ void init(const PseudoJet *particles, PseudoJetExt *jets, int size) {
+#if 0
   int first = threadIdx.x + blockIdx.x * blockDim.x;
   int grid = blockDim.x * gridDim.x;
 
@@ -217,9 +235,11 @@ __global__ void init(const PseudoJet *particles, PseudoJetExt *jets, int size) {
     jets[i].E = particles[i].E;
     _set_jet(jets[i]);
   }
+#endif
 }
 
 __global__ void output(const PseudoJetExt *jets, PseudoJet *particles, int size) {
+#if 0
   int first = threadIdx.x + blockIdx.x * blockDim.x;
   int grid = blockDim.x * gridDim.x;
 
@@ -231,9 +251,10 @@ __global__ void output(const PseudoJetExt *jets, PseudoJet *particles, int size)
     particles[i].index = i;
     particles[i].isJet = jets[i].isJet;
   }
+#endif
 }
 
-void cluster(PseudoJet *particles, int size, double r) {
+void cluster(PseudoJet *particles, int size, Scheme scheme, double r) {
 #pragma regoin CudaMalloc
   PseudoJetExt *d_jets;
   cudaCheck(cudaMalloc(&d_jets, size * sizeof(PseudoJetExt)));
@@ -256,7 +277,7 @@ void cluster(PseudoJet *particles, int size, double r) {
     num_blocks = (num_threads / 1024) + 1;
 
     // Find the minimum in each block for the distances array
-    reduction_min<<<num_blocks, 1024, 1024 * sizeof(Dist)>>>(d_jets, d_out, num_threads, n, one_over_r2);
+    reduction_min<<<num_blocks, 1024, 1024 * sizeof(Dist)>>>(d_jets, d_out, num_threads, n, scheme, one_over_r2);
 
     // // Find the minimum of all blocks
     int b = upper_power_of_two(num_blocks - 1) + 1;

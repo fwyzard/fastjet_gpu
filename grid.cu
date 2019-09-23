@@ -123,9 +123,11 @@ __device__ double plain_distance(const EtaPhi &p1, const EtaPhi &p2) {
   return (dphi * dphi + drap * drap);
 }
 
-__device__ Dist yij_distance(const EtaPhi *points, int i, int j, double one_over_r2) {
-  // k is the one in qusetion
-  // d k tid
+__device__ double safe_inverse(double x) {
+  return (x > 1e-300) ? (1.0 / x) : 1e300;
+}
+
+__device__ Dist yij_distance(const EtaPhi *points, int i, int j, Scheme scheme, double one_over_r2) {
   if (i > j) {
     int t = i;
     i = j;
@@ -135,11 +137,35 @@ __device__ Dist yij_distance(const EtaPhi *points, int i, int j, double one_over
   Dist d;
   d.i = i;
   d.j = j;
-  // if k == tid return diB
-  if (i == j)
-    d.distance = points[i].diB;
-  else
-    d.distance = ::min(points[i].diB, points[j].diB) * plain_distance(points[i], points[j]) * one_over_r2;
+
+  switch (scheme) {
+    case Scheme::Kt:
+      if (i == j) {
+        d.distance = points[i].diB;
+      } else {
+        d.distance = min(points[i].diB, points[j].diB) * plain_distance(points[i], points[j]) * one_over_r2;
+      }
+      break;
+
+    case Scheme::CambridgeAachen:
+      if (i == j) {
+        d.distance = 1.;
+      } else {
+        d.distance = plain_distance(points[i], points[j]) * one_over_r2;
+      }
+      break;
+
+    // TODO: store 1/diB instead of diB
+    case Scheme::AntiKt:
+      if (i == j) {
+        d.distance = safe_inverse(points[i].diB);
+      } else {
+        d.distance = min(
+            safe_inverse(points[i].diB),
+            safe_inverse(points[j].diB)) * plain_distance(points[i], points[j]) * one_over_r2;
+      }
+      break;
+  }
 
   return d;
 }
@@ -152,17 +178,16 @@ __device__ Dist minimum_in_cell(Grid const &config,
                                 const int tid,          // jet index
                                 const int i,            // cell coordinates
                                 const int j,
+                                Scheme scheme,          // recombination scheme (Kt, CambridgeAachen,  AntiKt)
                                 double one_over_r2) {
   int k = 0;
   int offset = config.offset(i, j);
   int num = grid[offset + k];
 
-  // PseudoJet jet1 = jets[tid];
-  // PseudoJet jet2;
   Dist temp;
-  while (num > 0) {
+  while (num >= 0) {
     if (tid != num) {
-      temp = yij_distance(points, tid, num, one_over_r2);
+      temp = yij_distance(points, tid, num, scheme, one_over_r2);
 
       if (temp.distance < min.distance)
         min = temp;
@@ -219,9 +244,10 @@ __global__ void set_points(Grid config, PseudoJet *jets, EtaPhi *points, const i
 
   for (int tid = start; tid < n; tid += stride) {
     EtaPhi p = _set_jet(jets[tid]);
-    p.box_i = config.i(p.eta);
-    p.box_j = config.j(p.phi);
+    p.box_i = 0; // config.i(p.eta);
+    p.box_j = 0; // config.j(p.phi);
     points[tid] = p;
+    //printf("particle %3d has (eta,phi,pT) = (%f,%f,%f) and cell (i,j) = (%d,%d)\n", tid, p.eta, p.phi, sqrt(p.diB), p.box_i, p.box_j);
   }
 }
 
@@ -244,10 +270,11 @@ __global__ void set_grid(Grid config, int *grid, const EtaPhi *points, const Pse
   }
 
   grid[offset + k] = -1;
+  //printf("cell (%d,%d) has %d elements\n", tid, bid, k);
 }
 
 __global__ void reduce_recombine(
-    Grid config, int *grid, EtaPhi *points, PseudoJet *jets, Dist *min_dists, int n, const float r) {
+    Grid config, int *grid, EtaPhi *points, PseudoJet *jets, Dist *min_dists, int n, Scheme scheme, const float r) {
   extern __shared__ Dist sdata[];
 
   const double one_over_r2 = 1. / (r * r);
@@ -265,55 +292,48 @@ __global__ void reduce_recombine(
       Dist local_min = min_dists[tid];
       if (local_min.i == -3 or local_min.j == min.i or local_min.j == min.j or local_min.i == min.i or
           local_min.i == min.j or local_min.i >= n or local_min.j >= n) {
-        EtaPhi bp;
 
-        min = yij_distance(points, tid, tid, one_over_r2);
-
-        min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i, p.box_j, one_over_r2);
+        min = yij_distance(points, tid, tid, scheme, one_over_r2);
+        min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i, p.box_j, scheme, one_over_r2);
 
         bool right = true;
         bool left = true;
         bool up = true;
         bool down = true;
 
+        EtaPhi bp;
         bp.eta = config.eta_max(p.box_i);
         bp.phi = p.phi;
         if (min.distance < plain_distance(p, bp)) {
-          // printf("saved right!\n");
           right = false;
         }
 
         bp.eta = config.eta_min(p.box_i);
         bp.phi = p.phi;
         if (min.distance < plain_distance(p, bp)) {
-          // printf("saved left!\n");
-          // printf("%20.8e\n", bp.eta);
-          // printf("%20.8e\n", points[min.j].eta);
           left = false;
         }
 
         bp.eta = p.eta;
         bp.phi = p.box_j + 1 <= config.max_j ? (p.box_j + 1) * r : 0;
         if (min.distance < plain_distance(p, bp)) {
-          // printf("saved up!\n");
           up = false;
         }
 
         bp.eta = p.eta;
         bp.phi = p.box_j - 1 >= 0 ? p.box_j * r : (config.max_j - 1) * r;
         if (min.distance < plain_distance(p, bp) and p.box_j - 1 >= 0) {
-          // printf("saved down!\n");
           down = false;
         }
 
         // Right
         if (p.box_i + 1 < config.max_i and right) {
-          min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i + 1, p.box_j, one_over_r2);
+          min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i + 1, p.box_j, scheme, one_over_r2);
         }
 
         // Left
         if (p.box_i - 1 >= 0 and left) {
-          min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i - 1, p.box_j, one_over_r2);
+          min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i - 1, p.box_j, scheme, one_over_r2);
         }
 
         // check if above config.max_j
@@ -321,16 +341,16 @@ __global__ void reduce_recombine(
 
         // Up
         if (up) {
-          min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i, j, one_over_r2);
+          min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i, j, scheme, one_over_r2);
 
           // Up Right
           if (p.box_i + 1 < config.max_i and right) {
-            min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i + 1, j, one_over_r2);
+            min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i + 1, j, scheme, one_over_r2);
           }
 
           // Up Left
           if (p.box_i - 1 >= 0 and left) {
-            min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i - 1, j, one_over_r2);
+            min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i - 1, j, scheme, one_over_r2);
           }
         }
 
@@ -339,30 +359,30 @@ __global__ void reduce_recombine(
 
         // Down
         if (down) {
-          min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i, j, one_over_r2);
+          min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i, j, scheme, one_over_r2);
 
           // Down Right
           if (p.box_i + 1 < config.max_i and right) {
-            min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i + 1, j, one_over_r2);
+            min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i + 1, j, scheme, one_over_r2);
           }
 
           // Down Left
           if (p.box_i - 1 >= 0 and left) {
-            min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i - 1, j, one_over_r2);
+            min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i - 1, j, scheme, one_over_r2);
           }
 
           if (p.box_j - 1 < 0) {
             // Down Down
-            min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i, j - 1, one_over_r2);
+            min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i, j - 1, scheme, one_over_r2);
 
             // Down Down Right
             if (p.box_i + 1 < config.max_i and right) {
-              min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i + 1, j - 1, one_over_r2);
+              min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i + 1, j - 1, scheme, one_over_r2);
             }
 
             // Down Down Left
             if (p.box_i - 1 >= 0 and left) {
-              min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i - 1, j - 1, one_over_r2);
+              min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i - 1, j - 1, scheme, one_over_r2);
             }
           }
         }
@@ -377,6 +397,7 @@ __global__ void reduce_recombine(
         min_dists[tid] = min;
       }
 
+      // FIXME: why an extra copy ?
       sdata[tid] = min_dists[tid];
     }
     __syncthreads();
@@ -403,6 +424,7 @@ __global__ void reduce_recombine(
 
     min = sdata[0];
     if (threadIdx.x == 0) {
+      //printf("will recombine pseudojets %d and %d with distance %f\n", min.i, min.j, min.distance);
       PseudoJet jet_i, jet_j;
 
       EtaPhi p1, p2;
@@ -443,8 +465,8 @@ __global__ void reduce_recombine(
         jet_i.E += jet_j.E;
         p2 = _set_jet(jet_i);
 
-        p2.box_i = config.i(p2.eta);
-        p2.box_j = config.j(p2.phi);
+        p2.box_i = 0; // config.i(p2.eta);
+        p2.box_j = 0; // config.j(p2.phi);
 
         jet_i.index = min.i;
 
@@ -467,7 +489,7 @@ __global__ void reduce_recombine(
 }
 #pragma endregion
 
-void cluster(PseudoJet *particles, int size, double r) {
+void cluster(PseudoJet *particles, int size, Scheme scheme, double r) {
   // examples from FastJet span |eta| < 10
   // TODO: make the eta range dynamic, based on the data themselves
   // TODO: try to use __constant__ memory for config
@@ -526,7 +548,7 @@ void cluster(PseudoJet *particles, int size, double r) {
     int sharedMemory = sizeof(Dist) * size;
 
     reduce_recombine<<<gridSize, blockSize, sharedMemory>>>(
-        config, d_grid_ptr, d_points_ptr, particles, d_min_dists_ptr, size, r);
+        config, d_grid_ptr, d_points_ptr, particles, d_min_dists_ptr, size, scheme, r);
     cudaCheck(cudaGetLastError());
   }
 #pragma endregion
