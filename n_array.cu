@@ -1,31 +1,19 @@
-#include <iostream>
+#include <cmath>
+
+#include <cuda_runtime.h>
 #include <thrust/device_free.h>
 #include <thrust/device_vector.h>
 #include <thrust/memory.h>
 
-using namespace std;
+#include "PseudoJet.h"
+#include "cluster.h"
+#include "cudaCheck.h"
 
-// Simple utility function to check for CUDA runtime errors
-void checkCUDAError(const char *msg);
+using namespace std;
 
 const double pi = 3.141592653589793238462643383279502884197;
 const double twopi = 6.283185307179586476925286766559005768394;
 const double MaxRap = 1e5;
-const double R = 0.6;
-const double R2 = R * R;
-const double invR2 = 1.0 / R2;
-// const double MAX_DOUBLE = 1.79769e+308;
-const double ptmin = 5.0;
-const double dcut = ptmin * ptmin;
-
-struct PseudoJet {
-  double px;
-  double py;
-  double pz;
-  double E;
-  int index;
-  bool isJet;
-};
 
 struct EtaPhi {
   double eta;
@@ -39,9 +27,7 @@ struct Dist {
   int j;
 };
 
-__host__ __device__ void print_distance(Dist d) {
-  printf("%4d%4d%20.8e\n", d.i, d.j, d.distance);
-}
+__host__ __device__ void print_distance(Dist d) { printf("%4d%4d%20.8e\n", d.i, d.j, d.distance); }
 
 __device__ double plain_distance(EtaPhi &p1, EtaPhi &p2) {
   double dphi = abs(p1.phi - p2.phi);
@@ -52,7 +38,7 @@ __device__ double plain_distance(EtaPhi &p1, EtaPhi &p2) {
   return (dphi * dphi + drap * drap);
 }
 
-__device__ Dist yij_distance(EtaPhi *points, int i, int j) {
+__device__ Dist yij_distance(EtaPhi *points, int i, int j, double one_over_r2) {
   if (i > j) {
     int t = i;
     i = j;
@@ -65,8 +51,7 @@ __device__ Dist yij_distance(EtaPhi *points, int i, int j) {
   if (i == j)
     d.distance = points[i].diB;
   else
-    d.distance = min(points[i].diB, points[j].diB) *
-                 plain_distance(points[i], points[j]) * invR2;
+    d.distance = min(points[i].diB, points[j].diB) * plain_distance(points[i], points[j]) * one_over_r2;
 
   return d;
 }
@@ -87,7 +72,7 @@ __host__ __device__ EtaPhi _set_jet(PseudoJet &jet) {
   }
   if (point.phi >= twopi) {
     point.phi -= twopi;
-  } // can happen if phi=-|eps<1e-15|?
+  }  // can happen if phi=-|eps<1e-15|?
   if (jet.E == abs(jet.pz) && point.diB == 0) {
     // Point has infinite rapidity -- convert that into a very large
     // number, but in such a way that different 0-pt momenta will have
@@ -103,9 +88,8 @@ __host__ __device__ EtaPhi _set_jet(PseudoJet &jet) {
     // get the rapidity in a way that's modestly insensitive to roundoff
     // error when things pz,E are large (actually the best we can do without
     // explicit knowledge of mass)
-    double effective_m2 = max(0.0, (jet.E + jet.pz) * (jet.E - jet.pz) -
-                                       point.diB); // force non tachyonic mass
-    double E_plus_pz = jet.E + abs(jet.pz);        // the safer of p+, p-
+    double effective_m2 = max(0.0, (jet.E + jet.pz) * (jet.E - jet.pz) - point.diB);  // force non tachyonic mass
+    double E_plus_pz = jet.E + abs(jet.pz);                                           // the safer of p+, p-
     // p+/p- = (p+ p-) / (p-)^2 = (kt^2+m^2)/(p-)^2
     point.eta = 0.5 * log((point.diB + effective_m2) / (E_plus_pz * E_plus_pz));
     if (jet.pz > 0) {
@@ -121,7 +105,7 @@ __global__ void set_points(PseudoJet *jets, EtaPhi *points) {
   points[tid] = _set_jet(jets[tid]);
 }
 
-__global__ void set_distances(EtaPhi *points, Dist *min_dists) {
+__global__ void set_distances(EtaPhi *points, Dist *min_dists, double one_over_r2) {
   extern __shared__ Dist sdata[];
 
   int tid = threadIdx.x;
@@ -132,7 +116,7 @@ __global__ void set_distances(EtaPhi *points, Dist *min_dists) {
 
   Dist d1, d2;
 
-  sdata[tid] = yij_distance(points, tid, k);
+  sdata[tid] = yij_distance(points, tid, k, one_over_r2);
   __syncthreads();
 
   for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {
@@ -150,11 +134,11 @@ __global__ void set_distances(EtaPhi *points, Dist *min_dists) {
 
     if (k == 0) {
       // Compute min for jet 0
-      min_dists[0] = yij_distance(points, 0, 0);
+      min_dists[0] = yij_distance(points, 0, 0, one_over_r2);
 
       // Compute min for jet 1
-      d1 = yij_distance(points, 1, 0);
-      d2 = yij_distance(points, 1, 1);
+      d1 = yij_distance(points, 1, 0, one_over_r2);
+      d2 = yij_distance(points, 1, 1, one_over_r2);
       if (d1.distance < d2.distance)
         min_dists[1] = d1;
       else
@@ -163,8 +147,7 @@ __global__ void set_distances(EtaPhi *points, Dist *min_dists) {
   }
 }
 
-__global__ void fastjet(PseudoJet *jets, EtaPhi *points, Dist *dists,
-                        Dist *min_dists, int n) {
+__global__ void fastjet(PseudoJet *jets, EtaPhi *points, Dist *dists, Dist *min_dists, int n, double one_over_r2) {
   extern __shared__ Dist sdata[];
 
   int tid = threadIdx.x;
@@ -192,7 +175,7 @@ __global__ void fastjet(PseudoJet *jets, EtaPhi *points, Dist *dists,
 
           // get d tid min.
           if (min.i < n && tid > min.i) {
-            temp = yij_distance(points, tid, min.i);
+            temp = yij_distance(points, tid, min.i, one_over_r2);
             // check if dj < sdata[tid].distance
             if (temp.distance < sdata[tid].distance) {
               sdata[tid] = temp;
@@ -202,7 +185,7 @@ __global__ void fastjet(PseudoJet *jets, EtaPhi *points, Dist *dists,
           }
 
           if (min.i < n && tid + s > min.i) {
-            temp = yij_distance(points, tid + s, min.i);
+            temp = yij_distance(points, tid + s, min.i, one_over_r2);
             // check if di < sdata[tid+s].distance
             if (temp.distance < sdata[tid + s].distance) {
               sdata[tid + s] = temp;
@@ -213,7 +196,7 @@ __global__ void fastjet(PseudoJet *jets, EtaPhi *points, Dist *dists,
 
           // get d tid min.j
           if (min.j < n && tid > min.j) {
-            temp = yij_distance(points, tid, min.j);
+            temp = yij_distance(points, tid, min.j, one_over_r2);
             // check if dj < sdata[tid].distance
             if (temp.distance < sdata[tid].distance) {
               sdata[tid] = temp;
@@ -223,7 +206,7 @@ __global__ void fastjet(PseudoJet *jets, EtaPhi *points, Dist *dists,
           }
 
           if (min.j < n && tid + s > min.j) {
-            temp = yij_distance(points, tid + s, min.j);
+            temp = yij_distance(points, tid + s, min.j, one_over_r2);
             // check if dj < sdata[tid+s].distance
             if (temp.distance < sdata[tid + s].distance && min.j) {
               sdata[tid + s] = temp;
@@ -244,7 +227,6 @@ __global__ void fastjet(PseudoJet *jets, EtaPhi *points, Dist *dists,
     // // recombine
     min = sdata[0];
     if (tid == 0) {
-
       PseudoJet jet_i, jet_j;
 
       EtaPhi p1, p2;
@@ -299,7 +281,7 @@ __global__ void fastjet(PseudoJet *jets, EtaPhi *points, Dist *dists,
 
     for (k = n - 1; k >= 0; k--) {
       if (min_dists[k].distance < 0) {
-        sdata[tid] = yij_distance(points, k, tid);
+        sdata[tid] = yij_distance(points, k, tid, one_over_r2);
         // dists[(k * (k - 1) / 2) + tid];
         __syncthreads();
 
@@ -322,7 +304,7 @@ __global__ void fastjet(PseudoJet *jets, EtaPhi *points, Dist *dists,
 
 // min.i
 #pragma region
-    sdata[tid] = yij_distance(points, min.i, tid);
+    sdata[tid] = yij_distance(points, min.i, tid, one_over_r2);
     __syncthreads();
 
     for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {
@@ -340,11 +322,11 @@ __global__ void fastjet(PseudoJet *jets, EtaPhi *points, Dist *dists,
       min_dists[min.i] = sdata[0];
 
       // Compute min for jet 0
-      min_dists[0] = yij_distance(points, 0, 0);
+      min_dists[0] = yij_distance(points, 0, 0, one_over_r2);
 
       // Compute min for jet 1
-      d1 = yij_distance(points, 1, 0);
-      d2 = yij_distance(points, 1, 1);
+      d1 = yij_distance(points, 1, 0, one_over_r2);
+      d2 = yij_distance(points, 1, 1, one_over_r2);
       if (d1.distance < d2.distance)
         min_dists[1] = d1;
       else
@@ -357,7 +339,7 @@ __global__ void fastjet(PseudoJet *jets, EtaPhi *points, Dist *dists,
     // min.j
     if (min.i != min.j) {
 #pragma region
-      sdata[tid] = yij_distance(points, min.j, tid);
+      sdata[tid] = yij_distance(points, min.j, tid, one_over_r2);
       __syncthreads();
 
       for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {
@@ -395,93 +377,24 @@ __global__ void fastjet(PseudoJet *jets, EtaPhi *points, Dist *dists,
   }
 }
 
-int main() {
-  cudaSetDevice(0);
-  cudaDeviceProp prop;
-  cudaGetDeviceProperties(&prop, 0);
-  printf("Device Name: %s\n", prop.name);
+void cluster(PseudoJet *particles, int size, double r) {
+  EtaPhi *d_points_ptr;
+  cudaCheck(cudaMalloc(&d_points_ptr, sizeof(EtaPhi) * size));
 
-  int NUM_EVENTS = 1;
+  Dist *d_dists_ptr;
+  cudaCheck(cudaMalloc(&d_dists_ptr, sizeof(Dist) * size * (size + 1) / 2));
 
-  for (int event = 0; event < NUM_EVENTS; event++) {
-    // read jets
-    thrust::host_vector<PseudoJet> h_jets;
-    PseudoJet temp;
+  Dist *d_min_dists_ptr;
+  cudaCheck(cudaMalloc(&d_min_dists_ptr, sizeof(Dist) * size));
 
-    int i = 0;
-    while (true) {
-      cin >> temp.px >> temp.py >> temp.pz >> temp.E;
-      temp.index = i;
-      if (cin.fail())
-        break;
+  set_points<<<1, size>>>(particles, d_points_ptr);
 
-      i++;
-      h_jets.push_back(temp);
-    }
+  const double one_over_r2 = 1. / (r * r);
+  set_distances<<<size, 512, sizeof(Dist) * size>>>(d_points_ptr, d_min_dists_ptr, one_over_r2);
 
-    cin.clear();
-    cin.ignore(numeric_limits<streamsize>::max(), '\n');
+  fastjet<<<1, 1024, (sizeof(Dist) * size)>>>(particles, d_points_ptr, d_dists_ptr, d_min_dists_ptr, size, one_over_r2);
 
-    int n = h_jets.size();
-
-    thrust::device_vector<PseudoJet> d_jets(h_jets);
-    PseudoJet *d_jets_ptr = thrust::raw_pointer_cast(d_jets.data());
-
-    thrust::device_vector<EtaPhi> d_points(n);
-    EtaPhi *d_points_ptr = thrust::raw_pointer_cast(d_points.data());
-
-    thrust::device_vector<Dist> d_dists(n * (n + 1) / 2);
-    Dist *d_dists_ptr = thrust::raw_pointer_cast(d_dists.data());
-
-    thrust::device_vector<Dist> d_min_dists(n);
-    Dist *d_min_dists_ptr = thrust::raw_pointer_cast(d_min_dists.data());
-
-    // CUDA Timing
-    cudaEvent_t start, stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
-    cudaEventRecord(start);
-
-    set_points<<<1, n>>>(d_jets_ptr, d_points_ptr);
-
-    set_distances<<<n, 512, sizeof(Dist) * n>>>(d_points_ptr, d_min_dists_ptr);
-
-    fastjet<<<1, 1024, (sizeof(Dist) * n)>>>(d_jets_ptr, d_points_ptr,
-                                             d_dists_ptr, d_min_dists_ptr, n);
-
-    cudaEventRecord(stop);
-    cudaEventSynchronize(stop);
-
-    // Check for any CUDA errors
-    checkCUDAError("kernal launch");
-
-    h_jets = d_jets;
-    thrust::host_vector<EtaPhi> h_points(d_points);
-    // thrust::host_vector<Dist> h_min_dists(d_min_dists);
-
-    for (int i = 0; i < n; i++) {
-      // printf("%4d%4d%20.8e\n", h_min_dists[i].i, h_min_dists[i].j,
-      //        h_min_dists[i].distance);
-      if (h_points[i].diB >= dcut && h_jets[i].isJet)
-        printf("%15.8f %15.8f %15.8f\n", h_points[i].eta, h_points[i].phi,
-               sqrt(h_points[i].diB));
-    }
-
-    float milliseconds = 0;
-    cudaEventElapsedTime(&milliseconds, start, stop);
-    printf("%d\t%.3fms\n", h_jets.size(), milliseconds);
-  }
-
-  // free(thrust::raw_pointer_cast(h_jets.data()));
-  // cudaFree(d_jets_ptr);
-  // cudaFree(d_min_dists_ptr);
-  return 0;
-}
-
-void checkCUDAError(const char *msg) {
-  cudaError_t err = cudaGetLastError();
-  if (cudaSuccess != err) {
-    fprintf(stderr, "Cuda error: %s: %s.\n", msg, cudaGetErrorString(err));
-    exit(-1);
-  }
+  cudaCheck(cudaFree(d_points_ptr));
+  cudaCheck(cudaFree(d_dists_ptr));
+  cudaCheck(cudaFree(d_min_dists_ptr));
 }

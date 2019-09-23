@@ -42,7 +42,7 @@ struct PseudoJetExt {
 const double pi = 3.141592653589793238462643383279502884197;
 const double twopi = 6.283185307179586476925286766559005768394;
 const double MaxRap = 1e5;
-const double MAX_DOUBLE = 1.79769e+308;
+//const double MAX_DOUBLE = 1.79769e+308;
 
 __device__ void _set_jet(PseudoJetExt &jet) {
   jet.diB = jet.px * jet.px + jet.py * jet.py;
@@ -125,6 +125,7 @@ __global__ void reduction_min(PseudoJetExt *jets,
                               int const distances_array_size,
                               int const num_particles,
                               double one_over_r2) {
+#if 0
   // Specialize BlockReduce type for our thread block
   typedef BlockReduce<Dist, 1024> BlockReduceT;
   // Shared memory
@@ -135,7 +136,8 @@ __global__ void reduction_min(PseudoJetExt *jets,
   Dist dst;
   tid_to_ij(dst.i, dst.j, tid);
 
-  if (tid >= distances_array_size || dst.j >= num_particles || dst.i >= num_particles) {
+  if (tid >= distances_array_size || dst.j >= num_particles ||
+      dst.i >= num_particles) {
     dst.d = MAX_DOUBLE;
   } else if (dst.i == dst.j) {
     dst.d = jets[dst.i].get_diB();
@@ -149,12 +151,14 @@ __global__ void reduction_min(PseudoJetExt *jets,
     distances_out[blockIdx.x] = min;
     // printf("%4d%4d%4d%20.8e\n", num_particles, min.i, min.j, min.d);
   }
+#endif
 }
 
 __global__ void reduction_blocks(PseudoJetExt *jets,
                                  Dist *distances_out,
                                  int const distances_array_size,
                                  int const num_particles) {
+#if 0
   // Specialize BlockReduce type for our thread block
   typedef BlockReduce<Dist, 1024> BlockReduceT;
   // Shared memory
@@ -199,6 +203,7 @@ __global__ void reduction_blocks(PseudoJetExt *jets,
       jets[j] = jets[num_particles - 1];
     }
   }
+#endif
 }
 
 __global__ void init(const PseudoJet *particles, PseudoJetExt *jets, int size) {

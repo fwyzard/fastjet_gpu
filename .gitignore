@@ -1,0 +1,6 @@
+*.o
+
+grid
+n_array
+tri_matrix
+tri_matrix_empty
