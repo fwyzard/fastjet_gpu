@@ -244,8 +244,8 @@ __global__ void set_points(Grid config, PseudoJet *jets, EtaPhi *points, const i
 
   for (int tid = start; tid < n; tid += stride) {
     EtaPhi p = _set_jet(jets[tid]);
-    p.box_i = 0; // config.i(p.eta);
-    p.box_j = 0; // config.j(p.phi);
+    p.box_i = config.i(p.eta);
+    p.box_j = config.j(p.phi);
     points[tid] = p;
     //printf("particle %3d has (eta,phi,pT) = (%f,%f,%f) and cell (i,j) = (%d,%d)\n", tid, p.eta, p.phi, sqrt(p.diB), p.box_i, p.box_j);
   }
@@ -301,6 +301,7 @@ __global__ void reduce_recombine(
         bool up = true;
         bool down = true;
 
+        /*
         EtaPhi bp;
         bp.eta = config.eta_max(p.box_i);
         bp.phi = p.phi;
@@ -325,6 +326,7 @@ __global__ void reduce_recombine(
         if (min.distance < plain_distance(p, bp) and p.box_j - 1 >= 0) {
           down = false;
         }
+        */
 
         // Right
         if (p.box_i + 1 < config.max_i and right) {
@@ -465,8 +467,8 @@ __global__ void reduce_recombine(
         jet_i.E += jet_j.E;
         p2 = _set_jet(jet_i);
 
-        p2.box_i = 0; // config.i(p2.eta);
-        p2.box_j = 0; // config.j(p2.phi);
+        p2.box_i = config.i(p2.eta);
+        p2.box_j = config.j(p2.phi);
 
         jet_i.index = min.i;
 
