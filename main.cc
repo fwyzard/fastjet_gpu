@@ -2,6 +2,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <limits>
@@ -101,8 +102,7 @@ int main(int argc, const char* argv[]) {
   bool sort = true;
   bool cartesian = false;
   int repetitions = 1;
-
-  initialise();
+  std::string filename;         // read data from file instead of standard input
 
   for (unsigned int i = 1; i < argc; ++i) {
     // --ptmin, -p
@@ -192,6 +192,17 @@ int main(int argc, const char* argv[]) {
       scheme = Scheme::CambridgeAachen;
     } else
 
+    // --file, -f
+    if (std::strcmp(argv[i], "--file") == 0 or std::strcmp(argv[i], "-f") == 0) {
+      ++i;
+      if (i >= argc) {
+        // error
+        std::cerr << "Missing argument to option " << argv[i-1] << std::endl;
+        return 1;
+      }
+      filename = argv[i];
+    } else
+
     // unknown option
     {
       std::cerr << "Unrecognized option " << argv[i] << std::endl;
@@ -199,10 +210,16 @@ int main(int argc, const char* argv[]) {
     }
   }
 
+  // initialise the GPU
+  initialise();
+
+  // open an input file
+  std::ifstream input(filename, std::ios_base::in);
+
   std::vector<PseudoJet> particles;
   std::vector<PseudoJet> jets;
 
-  while (read_next_event(std::cin, particles)) {
+  while (read_next_event(filename.empty() ? std::cin : input, particles)) {
     std::cout << "found " << particles.size() << " particles" << std::endl;
 
     // allocate GPU memory for the input particles
