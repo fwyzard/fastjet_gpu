@@ -404,12 +404,9 @@ __global__ void reduce_recombine(
     }
     __syncthreads();
 
-    // FIXME: why 256 ?
-    //for (unsigned int s = 256; s > 0; s >>= 1)
-    unsigned int width = 1;
-    while (width * 2 < n) {
-      width *= 2;
-    }
+    // find the largest power of 2 smaller than n
+    unsigned int width = (1u << 31) >> __clz(n - 1);
+
     for (unsigned int s = width; s > 0; s >>= 1) {
       for (int tid = threadIdx.x; tid < s and tid < n - s; tid += blockDim.x) {
         if (sdata[tid + s].distance < sdata[tid].distance) {
