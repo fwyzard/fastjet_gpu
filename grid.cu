@@ -301,6 +301,7 @@ __global__ void reduce_recombine(
         bool up = true;
         bool down = true;
 
+        /*
         EtaPhi bp;
         bp.eta = config.eta_max(p.box_i);
         bp.phi = p.phi;
@@ -325,6 +326,7 @@ __global__ void reduce_recombine(
         if (min.distance < plain_distance(p, bp) and p.box_j - 1 >= 0) {
           down = false;
         }
+        */
 
         // Right
         if (p.box_i + 1 < config.max_i and right) {
