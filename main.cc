@@ -110,6 +110,7 @@ int main(int argc, const char* argv[]) {
       ++i;
       if (i >= argc) {
         // error
+        std::cerr << "Missing argument to option " << argv[i-1] << std::endl;
         return 1;
       }
       char* stop;
@@ -118,6 +119,7 @@ int main(int argc, const char* argv[]) {
         ptmin = arg;
       } else {
         // error
+        std::cerr << "Error while parsing argument to option " << argv[i-1] << std::endl;
         return 1;
       }
     } else
@@ -127,6 +129,7 @@ int main(int argc, const char* argv[]) {
       ++i;
       if (i >= argc) {
         // error
+        std::cerr << "Missing argument to option " << argv[i-1] << std::endl;
         return 1;
       }
       char* stop;
@@ -135,6 +138,7 @@ int main(int argc, const char* argv[]) {
         r = arg;
       } else {
         // error
+        std::cerr << "Error while parsing argument to option " << argv[i-1] << std::endl;
         return 1;
       }
     } else
@@ -144,6 +148,7 @@ int main(int argc, const char* argv[]) {
       ++i;
       if (i >= argc) {
         // error
+        std::cerr << "Missing argument to option " << argv[i-1] << std::endl;
         return 1;
       }
       char* stop;
@@ -152,6 +157,7 @@ int main(int argc, const char* argv[]) {
         repetitions = arg;
       } else {
         // error
+        std::cerr << "Error while parsing argument to option " << argv[i-1] << std::endl;
         return 1;
       }
     } else
@@ -188,7 +194,7 @@ int main(int argc, const char* argv[]) {
 
     // unknown option
     {
-      // error
+      std::cerr << "Unrecognized option " << argv[i] << std::endl;
       return 1;
     }
   }
