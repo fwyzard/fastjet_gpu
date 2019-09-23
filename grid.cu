@@ -13,18 +13,22 @@ const double MaxRap = 1e5;
 #pragma endregion
 
 #pragma region struct
+
+using GridIndexType     = int;
+using ParticleIndexType = int;
+
 struct EtaPhi {
   double eta;
   double phi;
   double diB;
-  int box_i;
-  int box_j;
+  GridIndexType box_i;
+  GridIndexType box_j;
 };
 
 struct Dist {
   double distance;
-  int i;
-  int j;
+  ParticleIndexType i;
+  ParticleIndexType j;
 };
 
 struct Grid {
@@ -33,8 +37,8 @@ struct Grid {
   double min_phi;
   double max_phi;
   double r;
-  int max_i;
-  int max_j;
+  GridIndexType max_i;
+  GridIndexType max_j;
   int n;
 
   // TODO use a smaller grid size (esimate from distributions in data/mc)
@@ -45,25 +49,25 @@ struct Grid {
         min_phi(min_phi),
         max_phi(min_phi),
         r(r),
-        max_i(int((max_eta - min_eta) / r) + 1),
-        max_j(int((max_phi - min_phi) / r) + 1),
+        max_i((GridIndexType) (((max_eta - min_eta) / r) + 1)),
+        max_j((GridIndexType) (((max_phi - min_phi) / r) + 1)),
         n(n) {}
 
-  __host__ __device__ constexpr inline int i(double eta) const { return static_cast<int>((eta - min_eta) / r); }
+  __host__ __device__ constexpr inline GridIndexType i(double eta) const { return (GridIndexType) ((eta - min_eta) / r); }
 
-  __host__ __device__ constexpr inline int j(double phi) const { return static_cast<int>((phi - min_phi) / r); }
+  __host__ __device__ constexpr inline GridIndexType j(double phi) const { return (GridIndexType) ((phi - min_phi) / r); }
 
-  __host__ __device__ constexpr inline double eta_min(int i) const { return min_eta + r * i; }
+  __host__ __device__ constexpr inline double eta_min(GridIndexType i) const { return min_eta + r * i; }
 
-  __host__ __device__ constexpr inline double eta_max(int i) const { return min_eta + r * (i + 1); }
+  __host__ __device__ constexpr inline double eta_max(GridIndexType i) const { return min_eta + r * (i + 1); }
 
-  __host__ __device__ constexpr inline double phi_min(int j) const { return min_phi + r * j; }
+  __host__ __device__ constexpr inline double phi_min(GridIndexType j) const { return min_phi + r * j; }
 
-  __host__ __device__ constexpr inline double phi_max(int j) const { return min_phi + r * (j + 1); }
+  __host__ __device__ constexpr inline double phi_max(GridIndexType j) const { return min_phi + r * (j + 1); }
 
-  __host__ __device__ constexpr inline int index(int i, int j) const { return max_j * i + j; }
+  __host__ __device__ constexpr inline int index(GridIndexType i, GridIndexType j) const { return (int) max_j * i + j; }
 
-  __host__ __device__ constexpr inline int offset(int i, int j) const { return index(i, j) * n; }
+  __host__ __device__ constexpr inline int offset(GridIndexType i, GridIndexType j) const { return index(i, j) * n; }
 };
 #pragma endregion
 
@@ -127,9 +131,9 @@ __device__ double safe_inverse(double x) {
   return (x > 1e-300) ? (1.0 / x) : 1e300;
 }
 
-__device__ Dist yij_distance(const EtaPhi *points, int i, int j, Scheme scheme, double one_over_r2) {
+__device__ Dist yij_distance(const EtaPhi *points, ParticleIndexType i, ParticleIndexType j, Scheme scheme, double one_over_r2) {
   if (i > j) {
-    int t = i;
+    auto t = i;
     i = j;
     j = t;
   }
@@ -171,18 +175,18 @@ __device__ Dist yij_distance(const EtaPhi *points, int i, int j, Scheme scheme, 
 }
 
 __device__ Dist minimum_in_cell(Grid const &config,
-                                const int *grid,
+                                const ParticleIndexType *grid,
                                 const EtaPhi *points,
                                 const PseudoJet *jets,
                                 Dist min,
-                                const int tid,          // jet index
-                                const int i,            // cell coordinates
-                                const int j,
-                                Scheme scheme,          // recombination scheme (Kt, CambridgeAachen,  AntiKt)
+                                const ParticleIndexType tid,    // jet index
+                                const GridIndexType i,          // cell coordinates
+                                const GridIndexType j,
+                                Scheme scheme,                  // recombination scheme (Kt, CambridgeAachen,  AntiKt)
                                 double one_over_r2) {
   int k = 0;
   int offset = config.offset(i, j);
-  int num = grid[offset + k];
+  ParticleIndexType num = grid[offset + k];
 
   Dist temp;
   while (num >= 0) {
@@ -200,11 +204,11 @@ __device__ Dist minimum_in_cell(Grid const &config,
   return min;
 }
 
-__device__ void remove_from_grid(Grid const &config, int *grid, PseudoJet &jet, const EtaPhi &p) {
+__device__ void remove_from_grid(Grid const &config, ParticleIndexType *grid, PseudoJet &jet, const EtaPhi &p) {
   // Remove an element from a grid cell, and shift all following elements to fill the gap
   int k = 0;
   int offset = config.offset(p.box_i, p.box_j);
-  int num = grid[offset + k];
+  ParticleIndexType num = grid[offset + k];
   bool shift = false;
 
   while (num != -1) {
@@ -219,7 +223,7 @@ __device__ void remove_from_grid(Grid const &config, int *grid, PseudoJet &jet, 
   }
 }
 
-__device__ void add_to_grid(Grid const &config, int *grid, const PseudoJet &jet, const EtaPhi &p) {
+__device__ void add_to_grid(Grid const &config, ParticleIndexType *grid, const PseudoJet &jet, const EtaPhi &p) {
   // Add a jet as the last element of a grid cell
   int k = 0;
   int offset = config.offset(p.box_i, p.box_j);
@@ -228,7 +232,7 @@ __device__ void add_to_grid(Grid const &config, int *grid, const PseudoJet &jet,
   while (true) {
     num = grid[offset + k];
     if (num == -1) {
-      grid[offset + k] = jet.index;
+      grid[offset + k] = jet.index;         // FIXME add a check that jet.index fits in ParticleIndexType
       grid[offset + k + 1] = -1;
       break;
     }
@@ -251,9 +255,9 @@ __global__ void set_points(Grid config, PseudoJet *jets, EtaPhi *points, const i
   }
 }
 
-__global__ void set_grid(Grid config, int *grid, const EtaPhi *points, const PseudoJet *jets, const int n) {
-  int tid = threadIdx.x;
-  int bid = blockIdx.x;
+__global__ void set_grid(Grid config, ParticleIndexType *grid, const EtaPhi *points, const PseudoJet *jets, const int n) {
+  GridIndexType tid = threadIdx.x;
+  GridIndexType bid = blockIdx.x;
 
   int k = 0;
   EtaPhi p;
@@ -264,7 +268,7 @@ __global__ void set_grid(Grid config, int *grid, const EtaPhi *points, const Pse
     p = points[i];
 
     if (p.box_i == bid and p.box_j == tid) {
-      grid[offset + k] = jets[i].index;
+      grid[offset + k] = jets[i].index;     // FIXME add a check that jet.index fits in ParticleIndexType
       k++;
     }
   }
@@ -274,7 +278,7 @@ __global__ void set_grid(Grid config, int *grid, const EtaPhi *points, const Pse
 }
 
 __global__ void reduce_recombine(
-    Grid config, int *grid, EtaPhi *points, PseudoJet *jets, Dist *min_dists, int n, Scheme scheme, const float r) {
+    Grid config, ParticleIndexType *grid, EtaPhi *points, PseudoJet *jets, Dist *min_dists, int n, Scheme scheme, const float r) {
   extern __shared__ Dist sdata[];
 
   const double one_over_r2 = 1. / (r * r);
@@ -339,7 +343,7 @@ __global__ void reduce_recombine(
         }
 
         // check if above config.max_j
-        int j = p.box_j + 1 <= config.max_j ? p.box_j + 1 : 0;
+        GridIndexType j = (p.box_j + 1 <= config.max_j) ? p.box_j + 1 : 0;
 
         // Up
         if (up) {
@@ -389,9 +393,8 @@ __global__ void reduce_recombine(
           }
         }
 
-        int t;
         if (min.i > min.j) {
-          t = min.i;
+          auto t = min.i;
           min.i = min.j;
           min.j = t;
         }
@@ -499,8 +502,8 @@ void cluster(PseudoJet *particles, int size, Scheme scheme, double r) {
   cudaCheck(cudaMalloc(&d_points_ptr, sizeof(EtaPhi) * size));
 
   // TODO: use `short` instead of `int` if there are less than 32k particles
-  int *d_grid_ptr;
-  cudaCheck(cudaMalloc(&d_grid_ptr, sizeof(int) * config.max_i * config.max_j * config.n));
+  ParticleIndexType *d_grid_ptr;
+  cudaCheck(cudaMalloc(&d_grid_ptr, sizeof(ParticleIndexType) * config.max_i * config.max_j * config.n));
 
   Dist *d_min_dists_ptr;
   cudaCheck(cudaMalloc(&d_min_dists_ptr, sizeof(Dist) * size));
