@@ -49,9 +49,9 @@ struct Grid {
         max_j(int((max_phi - min_phi) / r) + 1),
         n(n) {}
 
-  __host__ __device__ constexpr inline int i(double eta) const { return static_cast<int>((max_eta - min_eta) / r); }
+  __host__ __device__ constexpr inline int i(double eta) const { return static_cast<int>((eta - min_eta) / r); }
 
-  __host__ __device__ constexpr inline int j(double phi) const { return static_cast<int>((max_phi - min_phi) / r); }
+  __host__ __device__ constexpr inline int j(double phi) const { return static_cast<int>((phi - min_phi) / r); }
 
   __host__ __device__ constexpr inline double eta_min(int i) const { return min_eta + r * i; }
 
@@ -176,7 +176,7 @@ __device__ Dist minimum_in_cell(Grid const &config,
 }
 
 __device__ void remove_from_grid(Grid const &config, int *grid, PseudoJet &jet, const EtaPhi &p) {
-  // Remove from grid
+  // Remove an element from a grid cell, and shift all following elements to fill the gap
   int k = 0;
   int offset = config.offset(p.box_i, p.box_j);
   int num = grid[offset + k];
@@ -195,7 +195,7 @@ __device__ void remove_from_grid(Grid const &config, int *grid, PseudoJet &jet, 
 }
 
 __device__ void add_to_grid(Grid const &config, int *grid, const PseudoJet &jet, const EtaPhi &p) {
-  // Remove from grid
+  // Add a jet as the last element of a grid cell
   int k = 0;
   int offset = config.offset(p.box_i, p.box_j);
   int num = grid[offset + k];
@@ -468,15 +468,18 @@ __global__ void reduce_recombine(
 #pragma endregion
 
 void cluster(PseudoJet *particles, int size, double r) {
-  const Grid config(-5., +5., 0, 2 * M_PI, r, size);
+  // examples from FastJet span |eta| < 10
+  // TODO: make the eta range dynamic, based on the data themselves
   // TODO: try to use __constant__ memory for config
+  const Grid config(-10., +10., 0, 2 * M_PI, r, size);
 
 #pragma region vectors
   EtaPhi *d_points_ptr;
   cudaCheck(cudaMalloc(&d_points_ptr, sizeof(EtaPhi) * size));
 
+  // TODO: use `short` instead of `int` if there are less than 32k particles
   int *d_grid_ptr;
-  cudaCheck(cudaMalloc(&d_grid_ptr, sizeof(int) * size * config.max_i * config.max_j));
+  cudaCheck(cudaMalloc(&d_grid_ptr, sizeof(int) * config.max_i * config.max_j * config.n));
 
   Dist *d_min_dists_ptr;
   cudaCheck(cudaMalloc(&d_min_dists_ptr, sizeof(Dist) * size));
