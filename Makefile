@@ -7,6 +7,8 @@ CUDA_LIBRARY_PATH=$(CUDA_BASE)/lib64
 CUB_BASE:=$(CUDA_BASE)/targets/x86_64-linux/include/thrust/system/cuda/detail
 CUB_INCLUDE_PATH=$(CUB_BASE)
 
+FASTJET_BASE:=
+
 CXX=g++-8
 CXX_FLAGS=-std=c++17 -O2 -g -I$(CUDA_INCLUDE_PATH) -I$(CUB_INCLUDE_PATH)
 LD_FLAGS=-L$(CUDA_LIBRARY_PATH) -lcudart -lcuda
@@ -46,3 +48,40 @@ n_array.o: n_array.cu
 
 n_array: main.o n_array.o
 	$(CXX) $(CXX_FLAGS) $^ $(LD_FLAGS) -o $@
+
+
+.PHONY: run run_fastjet run_tri_matrix run_grid
+
+run: run_fastjet run_tri_matrix run_grid run_n_array
+
+# run fastjet to get reference results
+ifdef FASTJET_BASE
+run_fastjet:
+	mkdir -p output/fastjet
+	$(FASTJET_BASE)/example/fastjet_timing_plugins -antikt -r 0.4 -incl 1.0 < data/808_cms.dat > output/fastjet/ak_0.4.log
+	$(FASTJET_BASE)/example/fastjet_timing_plugins -cam    -r 0.4 -incl 1.0 < data/808_cms.dat > output/fastjet/ca_0.4.log
+	$(FASTJET_BASE)/example/fastjet_timing_plugins -kt     -r 0.4 -incl 1.0 < data/808_cms.dat > output/fastjet/kt_0.4.log
+else
+run_fastjet:
+endif
+
+# run the tri_matrix implementation
+run_tri_matrix: tri_matrix
+	mkdir -p output/tri_matrix
+	./tri_matrix -antikt -r 0.4 -p 1.0 < data/808_cms.dat > output/tri_matrix/ak_0.4.log
+	./tri_matrix -cam    -r 0.4 -p 1.0 < data/808_cms.dat > output/tri_matrix/ca_0.4.log
+	./tri_matrix -kt     -r 0.4 -p 1.0 < data/808_cms.dat > output/tri_matrix/kt_0.4.log
+
+# run the grid implementation
+run_grid: grid
+	mkdir -p output/grid
+	./grid -antikt -r 0.4 -p 1.0 < data/808_cms.dat > output/grid/ak_0.4.log
+	./grid -cam    -r 0.4 -p 1.0 < data/808_cms.dat > output/grid/ca_0.4.log
+	./grid -kt     -r 0.4 -p 1.0 < data/808_cms.dat > output/grid/kt_0.4.log
+
+# run the n_array implementation
+run_n_array: n_array
+	mkdir -p output/n_array
+	./n_array -antikt -r 0.4 -p 1.0 < data/808_cms.dat > output/n_array/ak_0.4.log
+	./n_array -cam    -r 0.4 -p 1.0 < data/808_cms.dat > output/n_array/ca_0.4.log
+	./n_array -kt     -r 0.4 -p 1.0 < data/808_cms.dat > output/n_array/kt_0.4.log
