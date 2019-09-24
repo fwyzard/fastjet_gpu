@@ -79,13 +79,17 @@ struct Grid {
 #pragma endregion
 
 #pragma region device_functions
-__host__ __device__ EtaPhi _set_jet(PseudoJet &jet) {
+__host__ __device__ constexpr inline double safe_inverse(double x) {
+  return (x > 1e-300) ? (1.0 / x) : 1e300;
+}
+
+__host__ __device__ EtaPhi _set_jet(PseudoJet &jet, Scheme scheme) {
   EtaPhi point;
 
-  point.diB = jet.px * jet.px + jet.py * jet.py;
+  auto pt2 = jet.px * jet.px + jet.py * jet.py;
   jet.isJet = false;
 
-  if (point.diB == 0.0) {
+  if (pt2 == 0.0) {
     point.phi = 0.0;
   } else {
     point.phi = std::atan2(jet.py, jet.px);
@@ -98,7 +102,7 @@ __host__ __device__ EtaPhi _set_jet(PseudoJet &jet) {
       point.phi -= (2 * M_PI);
     }
   }
-  if (jet.E == std::abs(jet.pz) and point.diB == 0) {
+  if (jet.E == std::abs(jet.pz) and pt2 == 0) {
     // Point has infinite rapidity -- convert that into a very large
     // number, but in such a way that different 0-pt momenta will have
     // different rapidities (so as to lift the degeneracy between
@@ -113,13 +117,28 @@ __host__ __device__ EtaPhi _set_jet(PseudoJet &jet) {
     // get the rapidity in a way that's modestly insensitive to roundoff
     // error when things pz,E are large (actually the best we can do without
     // explicit knowledge of mass)
-    double effective_m2 = ::max(0.0, (jet.E + jet.pz) * (jet.E - jet.pz) - point.diB);  // force non tachyonic mass
-    double E_plus_pz = jet.E + std::abs(jet.pz);                                        // the safer of p+, p-
+    double effective_m2 = ::max(0.0, (jet.E + jet.pz) * (jet.E - jet.pz) - pt2);    // force non tachyonic mass
+    double E_plus_pz = jet.E + std::abs(jet.pz);                                    // the safer of p+, p-
     // p+/p- = (p+ p-) / (p-)^2 = (kt^2+m^2)/(p-)^2
-    point.eta = 0.5 * std::log((point.diB + effective_m2) / (E_plus_pz * E_plus_pz));
+    point.eta = 0.5 * std::log((pt2 + effective_m2) / (E_plus_pz * E_plus_pz));
     if (jet.pz > 0) {
       point.eta = -point.eta;
     }
+  }
+
+  // set the "weight" used depending on the jet algorithm
+  switch (scheme) {
+    case Scheme::Kt:
+      point.diB = pt2;
+      break;
+
+    case Scheme::CambridgeAachen:
+      point.diB = 1.;
+      break;
+
+    case Scheme::AntiKt:
+      point.diB = safe_inverse(pt2);
+      break;
   }
 
   return point;
@@ -134,11 +153,7 @@ __device__ double plain_distance(const EtaPhi &p1, const EtaPhi &p2) {
   return (dphi * dphi + drap * drap);
 }
 
-__device__ double safe_inverse(double x) {
-  return (x > 1e-300) ? (1.0 / x) : 1e300;
-}
-
-__device__ Dist yij_distance(const EtaPhi *points, ParticleIndexType i, ParticleIndexType j, Scheme scheme, double one_over_r2) {
+__device__ Dist yij_distance(const EtaPhi *points, ParticleIndexType i, ParticleIndexType j, double one_over_r2) {
   if (i > j) {
     ::swap(i, j);
   }
@@ -147,33 +162,10 @@ __device__ Dist yij_distance(const EtaPhi *points, ParticleIndexType i, Particle
   d.i = i;
   d.j = j;
 
-  switch (scheme) {
-    case Scheme::Kt:
-      if (i == j) {
-        d.distance = points[i].diB;
-      } else {
-        d.distance = min(points[i].diB, points[j].diB) * plain_distance(points[i], points[j]) * one_over_r2;
-      }
-      break;
-
-    case Scheme::CambridgeAachen:
-      if (i == j) {
-        d.distance = 1.;
-      } else {
-        d.distance = plain_distance(points[i], points[j]) * one_over_r2;
-      }
-      break;
-
-    // TODO: store 1/diB instead of diB
-    case Scheme::AntiKt:
-      if (i == j) {
-        d.distance = safe_inverse(points[i].diB);
-      } else {
-        d.distance = min(
-            safe_inverse(points[i].diB),
-            safe_inverse(points[j].diB)) * plain_distance(points[i], points[j]) * one_over_r2;
-      }
-      break;
+  if (i == j) {
+    d.distance = points[i].diB;
+  } else {
+    d.distance = min(points[i].diB, points[j].diB) * plain_distance(points[i], points[j]) * one_over_r2;
   }
 
   return d;
@@ -187,7 +179,6 @@ __device__ Dist minimum_in_cell(Grid const &config,
                                 const ParticleIndexType tid,    // jet index
                                 const GridIndexType i,          // cell coordinates
                                 const GridIndexType j,
-                                Scheme scheme,                  // recombination scheme (Kt, CambridgeAachen,  AntiKt)
                                 double one_over_r2) {
   int k = 0;
   int offset = config.offset(i, j);
@@ -196,7 +187,7 @@ __device__ Dist minimum_in_cell(Grid const &config,
   Dist temp;
   while (num >= 0) {
     if (tid != num) {
-      temp = yij_distance(points, tid, num, scheme, one_over_r2);
+      temp = yij_distance(points, tid, num, one_over_r2);
 
       if (temp.distance < min.distance)
         min = temp;
@@ -259,12 +250,12 @@ __device__ ParticleIndexType & jet_in_grid(Grid const &config, ParticleIndexType
 #pragma endregion
 
 #pragma region kernels
-__global__ void set_points(Grid config, PseudoJet *jets, EtaPhi *points, const int n) {
+__global__ void set_points(Grid config, PseudoJet *jets, EtaPhi *points, const int n, Scheme scheme) {
   int start = threadIdx.x + blockIdx.x * blockDim.x;
   int stride = gridDim.x * blockDim.x;
 
   for (int tid = start; tid < n; tid += stride) {
-    EtaPhi p = _set_jet(jets[tid]);
+    EtaPhi p = _set_jet(jets[tid], scheme);
     p.box_i = config.i(p.eta);
     p.box_j = config.j(p.phi);
     points[tid] = p;
@@ -314,8 +305,8 @@ __global__ void reduce_recombine(
       if (local_min.i == -3 or local_min.j == min.i or local_min.j == min.j or local_min.i == min.i or
           local_min.i == min.j or local_min.i >= n or local_min.j >= n) {
 
-        min = yij_distance(points, tid, tid, scheme, one_over_r2);
-        min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i, p.box_j, scheme, one_over_r2);
+        min = yij_distance(points, tid, tid, one_over_r2);
+        min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i, p.box_j, one_over_r2);
 
         bool right = true;
         bool left = true;
@@ -351,12 +342,12 @@ __global__ void reduce_recombine(
 
         // Right
         if (p.box_i + 1 < config.max_i and right) {
-          min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i + 1, p.box_j, scheme, one_over_r2);
+          min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i + 1, p.box_j, one_over_r2);
         }
 
         // Left
         if (p.box_i - 1 >= 0 and left) {
-          min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i - 1, p.box_j, scheme, one_over_r2);
+          min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i - 1, p.box_j, one_over_r2);
         }
 
         // check if above config.max_j
@@ -364,16 +355,16 @@ __global__ void reduce_recombine(
 
         // Up
         if (up) {
-          min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i, j, scheme, one_over_r2);
+          min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i, j, one_over_r2);
 
           // Up Right
           if (p.box_i + 1 < config.max_i and right) {
-            min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i + 1, j, scheme, one_over_r2);
+            min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i + 1, j, one_over_r2);
           }
 
           // Up Left
           if (p.box_i - 1 >= 0 and left) {
-            min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i - 1, j, scheme, one_over_r2);
+            min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i - 1, j, one_over_r2);
           }
         }
 
@@ -382,30 +373,30 @@ __global__ void reduce_recombine(
 
         // Down
         if (down) {
-          min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i, j, scheme, one_over_r2);
+          min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i, j, one_over_r2);
 
           // Down Right
           if (p.box_i + 1 < config.max_i and right) {
-            min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i + 1, j, scheme, one_over_r2);
+            min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i + 1, j, one_over_r2);
           }
 
           // Down Left
           if (p.box_i - 1 >= 0 and left) {
-            min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i - 1, j, scheme, one_over_r2);
+            min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i - 1, j, one_over_r2);
           }
 
           if (p.box_j - 1 < 0) {
             // Down Down
-            min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i, j - 1, scheme, one_over_r2);
+            min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i, j - 1, one_over_r2);
 
             // Down Down Right
             if (p.box_i + 1 < config.max_i and right) {
-              min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i + 1, j - 1, scheme, one_over_r2);
+              min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i + 1, j - 1, one_over_r2);
             }
 
             // Down Down Left
             if (p.box_i - 1 >= 0 and left) {
-              min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i - 1, j - 1, scheme, one_over_r2);
+              min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i - 1, j - 1, one_over_r2);
             }
           }
         }
@@ -474,7 +465,7 @@ __global__ void reduce_recombine(
         jet.E  = jets[min.i].E  + jets[min.j].E;
         jet.index = min.i;
 
-        EtaPhi point = _set_jet(jet);
+        EtaPhi point = _set_jet(jet, scheme);
         point.box_i = config.i(point.eta);
         point.box_j = config.j(point.phi);
 
@@ -523,7 +514,7 @@ void cluster(PseudoJet *particles, int size, Scheme scheme, double r) {
   cudaCheck(cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, set_points, 0, 0));
   int gridSize = std::min((size + blockSize - 1) / blockSize, minGridSize);
   // set jets into points
-  set_points<<<gridSize, blockSize>>>(config, particles, d_points_ptr, size);
+  set_points<<<gridSize, blockSize>>>(config, particles, d_points_ptr, size, scheme);
   cudaCheck(cudaDeviceSynchronize());
 
   // create grid
