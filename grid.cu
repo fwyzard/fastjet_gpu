@@ -14,14 +14,13 @@ const double MaxRap = 1e5;
 
 #pragma region struct
 template <typename T>
-__host__ __device__
-inline void swap(T& a, T& b) {
+__host__ __device__ inline void swap(T &a, T &b) {
   auto t = std::move(a);
   a = std::move(b);
   b = std::move(t);
 }
 
-using GridIndexType     = int;
+using GridIndexType = int;
 using ParticleIndexType = int;
 
 struct EtaPhi {
@@ -46,23 +45,27 @@ struct Grid {
   double r;
   GridIndexType max_i;
   GridIndexType max_j;
-  int n;
+  ParticleIndexType n;
 
   // TODO use a smaller grid size (esimate from distributions in data/mc)
   // TODO usa a SoA
-  __host__ __device__ Grid(double min_eta, double max_eta, double min_phi, double max_phi, double r, int n)
+  __host__ __device__ Grid(double min_eta, double max_eta, double min_phi, double max_phi, double r, ParticleIndexType n)
       : min_eta(min_eta),
         max_eta(max_eta),
         min_phi(min_phi),
         max_phi(min_phi),
         r(r),
-        max_i((GridIndexType) (((max_eta - min_eta) / r) + 1)),
-        max_j((GridIndexType) (((max_phi - min_phi) / r) + 1)),
+        max_i((GridIndexType)(((max_eta - min_eta) / r) + 1)),
+        max_j((GridIndexType)(((max_phi - min_phi) / r) + 1)),
         n(n) {}
 
-  __host__ __device__ constexpr inline GridIndexType i(double eta) const { return (GridIndexType) ((eta - min_eta) / r); }
+  __host__ __device__ constexpr inline GridIndexType i(double eta) const {
+    return (GridIndexType)((eta - min_eta) / r);
+  }
 
-  __host__ __device__ constexpr inline GridIndexType j(double phi) const { return (GridIndexType) ((phi - min_phi) / r); }
+  __host__ __device__ constexpr inline GridIndexType j(double phi) const {
+    return (GridIndexType)((phi - min_phi) / r);
+  }
 
   __host__ __device__ constexpr inline double eta_min(GridIndexType i) const { return min_eta + r * i; }
 
@@ -72,16 +75,14 @@ struct Grid {
 
   __host__ __device__ constexpr inline double phi_max(GridIndexType j) const { return min_phi + r * (j + 1); }
 
-  __host__ __device__ constexpr inline int index(GridIndexType i, GridIndexType j) const { return (int) max_j * i + j; }
+  __host__ __device__ constexpr inline int index(GridIndexType i, GridIndexType j) const { return (int)max_j * i + j; }
 
   __host__ __device__ constexpr inline int offset(GridIndexType i, GridIndexType j) const { return index(i, j) * n; }
 };
 #pragma endregion
 
 #pragma region device_functions
-__host__ __device__ constexpr inline double safe_inverse(double x) {
-  return (x > 1e-300) ? (1.0 / x) : 1e300;
-}
+__host__ __device__ constexpr inline double safe_inverse(double x) { return (x > 1e-300) ? (1.0 / x) : 1e300; }
 
 __host__ __device__ EtaPhi _set_jet(PseudoJet &jet, Scheme scheme) {
   EtaPhi point;
@@ -117,8 +118,8 @@ __host__ __device__ EtaPhi _set_jet(PseudoJet &jet, Scheme scheme) {
     // get the rapidity in a way that's modestly insensitive to roundoff
     // error when things pz,E are large (actually the best we can do without
     // explicit knowledge of mass)
-    double effective_m2 = ::max(0.0, (jet.E + jet.pz) * (jet.E - jet.pz) - pt2);    // force non tachyonic mass
-    double E_plus_pz = jet.E + std::abs(jet.pz);                                    // the safer of p+, p-
+    double effective_m2 = ::max(0.0, (jet.E + jet.pz) * (jet.E - jet.pz) - pt2);  // force non tachyonic mass
+    double E_plus_pz = jet.E + std::abs(jet.pz);                                  // the safer of p+, p-
     // p+/p- = (p+ p-) / (p-)^2 = (kt^2+m^2)/(p-)^2
     point.eta = 0.5 * std::log((pt2 + effective_m2) / (E_plus_pz * E_plus_pz));
     if (jet.pz > 0) {
@@ -176,8 +177,8 @@ __device__ Dist minimum_in_cell(Grid const &config,
                                 const EtaPhi *points,
                                 const PseudoJet *jets,
                                 Dist min,
-                                const ParticleIndexType tid,    // jet index
-                                const GridIndexType i,          // cell coordinates
+                                const ParticleIndexType tid,  // jet index
+                                const GridIndexType i,        // cell coordinates
                                 const GridIndexType j,
                                 double one_over_r2) {
   int k = 0;
@@ -200,13 +201,13 @@ __device__ Dist minimum_in_cell(Grid const &config,
   return min;
 }
 
-__device__ void remove_from_grid(Grid const &config, ParticleIndexType *grid, PseudoJet &jet, const EtaPhi &p) {
+__device__ void remove_from_grid(Grid const &config, ParticleIndexType *grid, ParticleIndexType jet, const EtaPhi &p) {
   // Remove an element from a grid cell, and shift all following elements to fill the gap
   int offset = config.offset(p.box_i, p.box_j);
   int first, last;
   for (int k = 0; k < config.n; ++k) {
     ParticleIndexType num = grid[offset + k];
-    if (num == jet.index) {
+    if (num == jet) {
       first = k;
     } else if (num == -1) {
       last = k;
@@ -221,13 +222,13 @@ __device__ void remove_from_grid(Grid const &config, ParticleIndexType *grid, Ps
   grid[offset + last - 1] = -1;
 }
 
-__device__ void add_to_grid(Grid const &config, ParticleIndexType *grid, const PseudoJet &jet, const EtaPhi &p) {
+__device__ void add_to_grid(Grid const &config, ParticleIndexType *grid, ParticleIndexType jet, const EtaPhi &p) {
   // Add a jet as the last element of a grid cell
   int offset = config.offset(p.box_i, p.box_j);
   for (int k = 0; k < config.n; ++k) {
     ParticleIndexType num = grid[offset + k];
     if (num == -1) {
-      grid[offset + k] = jet.index;         // FIXME add a check that jet.index fits in ParticleIndexType
+      grid[offset + k] = jet;
       grid[offset + k + 1] = -1;
       break;
     }
@@ -235,12 +236,15 @@ __device__ void add_to_grid(Grid const &config, ParticleIndexType *grid, const P
   }
 }
 
-__device__ ParticleIndexType & jet_in_grid(Grid const &config, ParticleIndexType *grid, PseudoJet &jet, const EtaPhi &p) {
+__device__ ParticleIndexType &jet_in_grid(Grid const &config,
+                                          ParticleIndexType *grid,
+                                          ParticleIndexType jet,
+                                          const EtaPhi &p) {
   // Return a reference to the element that identifies a jet in a grid cell
   int offset = config.offset(p.box_i, p.box_j);
   for (int k = 0; k < config.n; ++k) {
     ParticleIndexType num = grid[offset + k];
-    if (num == jet.index) {
+    if (num == jet) {
       return grid[offset + k];
     }
   }
@@ -250,7 +254,7 @@ __device__ ParticleIndexType & jet_in_grid(Grid const &config, ParticleIndexType
 #pragma endregion
 
 #pragma region kernels
-__global__ void set_points(Grid config, PseudoJet *jets, EtaPhi *points, const int n, Scheme scheme) {
+__global__ void set_points(Grid config, PseudoJet *jets, EtaPhi *points, const ParticleIndexType n, Scheme scheme) {
   int start = threadIdx.x + blockIdx.x * blockDim.x;
   int stride = gridDim.x * blockDim.x;
 
@@ -263,7 +267,8 @@ __global__ void set_points(Grid config, PseudoJet *jets, EtaPhi *points, const i
   }
 }
 
-__global__ void set_grid(Grid config, ParticleIndexType *grid, const EtaPhi *points, const PseudoJet *jets, const int n) {
+__global__ void set_grid(
+    Grid config, ParticleIndexType *grid, const EtaPhi *points, const PseudoJet *jets, const ParticleIndexType n) {
   GridIndexType tid = threadIdx.x;
   GridIndexType bid = blockIdx.x;
 
@@ -272,11 +277,12 @@ __global__ void set_grid(Grid config, ParticleIndexType *grid, const EtaPhi *poi
 
   int offset = config.offset(bid, tid);
 
-  for (int i = 0; i < n; i++) {
+  // FIXME add a check that jet.index fits in ParticleIndexType
+  for (ParticleIndexType i = 0; i < n; i++) {
     p = points[i];
 
     if (p.box_i == bid and p.box_j == tid) {
-      grid[offset + k] = jets[i].index;     // FIXME add a check that jet.index fits in ParticleIndexType
+      grid[offset + k] = i;
       k++;
     }
   }
@@ -285,8 +291,14 @@ __global__ void set_grid(Grid config, ParticleIndexType *grid, const EtaPhi *poi
   //printf("cell (%d,%d) has %d elements\n", tid, bid, k);
 }
 
-__global__ void reduce_recombine(
-    Grid config, ParticleIndexType *grid, EtaPhi *points, PseudoJet *jets, Dist *min_dists, int n, Scheme scheme, const float r) {
+__global__ void reduce_recombine(Grid config,
+                                 ParticleIndexType *grid,
+                                 EtaPhi *points,
+                                 PseudoJet *jets,
+                                 Dist *min_dists,
+                                 ParticleIndexType n,
+                                 Scheme scheme,
+                                 const float r) {
   extern __shared__ Dist sdata[];
 
   const double one_over_r2 = 1. / (r * r);
@@ -304,7 +316,6 @@ __global__ void reduce_recombine(
       Dist local_min = min_dists[tid];
       if (local_min.i == -3 or local_min.j == min.i or local_min.j == min.j or local_min.i == min.i or
           local_min.i == min.j or local_min.i >= n or local_min.j >= n) {
-
         min = yij_distance(points, tid, tid, one_over_r2);
         min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i, p.box_j, one_over_r2);
 
@@ -437,33 +448,30 @@ __global__ void reduce_recombine(
         // remove the pseudojet jets[min.j] from the grid and promote it to jet status
         PseudoJet jet = jets[min.j];
         EtaPhi point = points[min.j];
-        remove_from_grid(config, grid, jet, point);
+        remove_from_grid(config, grid, min.j, points[min.j]);
         jet.isJet = true;
 
         // move the last pseudojet to position min.j
         if (min.j != n - 1) {
-          jet_in_grid(config, grid, jets[n - 1], points[n - 1]) = min.j;
+          jet_in_grid(config, grid, n - 1, points[n - 1]) = min.j;
           jets[min.j] = jets[n - 1];
-          jets[min.j].index = min.j;
           points[min.j] = points[n - 1];
         }
 
         // move the jet to the end of the list
-        jet.index = n - 1;
         jets[n - 1] = jet;
         points[n - 1] = point;
 
       } else {
-        remove_from_grid(config, grid, jets[min.i], points[min.i]);
-        remove_from_grid(config, grid, jets[min.j], points[min.j]);
+        remove_from_grid(config, grid, min.i, points[min.i]);
+        remove_from_grid(config, grid, min.j, points[min.j]);
 
         // recombine the two pseudojets
         PseudoJet jet;
         jet.px = jets[min.i].px + jets[min.j].px;
         jet.py = jets[min.i].py + jets[min.j].py;
         jet.pz = jets[min.i].pz + jets[min.j].pz;
-        jet.E  = jets[min.i].E  + jets[min.j].E;
-        jet.index = min.i;
+        jet.E = jets[min.i].E + jets[min.j].E;
 
         EtaPhi point = _set_jet(jet, scheme);
         point.box_i = config.i(point.eta);
@@ -471,13 +479,12 @@ __global__ void reduce_recombine(
 
         jets[min.i] = jet;
         points[min.i] = point;
-        add_to_grid(config, grid, jet, point);
+        add_to_grid(config, grid, min.i, points[min.i]);
 
         // move the last pseudojet to position min.j
         if (min.j != n - 1) {
-          jet_in_grid(config, grid, jets[n - 1], points[n - 1]) = min.j;
+          jet_in_grid(config, grid, n - 1, points[n - 1]) = min.j;
           jets[min.j] = jets[n - 1];
-          jets[min.j].index = min.j;
           points[min.j] = points[n - 1];
         }
       }
