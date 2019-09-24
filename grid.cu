@@ -243,6 +243,19 @@ __device__ void add_to_grid(Grid const &config, ParticleIndexType *grid, const P
     // FIXME handle the case where the cell is full
   }
 }
+
+__device__ ParticleIndexType & jet_in_grid(Grid const &config, ParticleIndexType *grid, PseudoJet &jet, const EtaPhi &p) {
+  // Return a reference to the element that identifies a jet in a grid cell
+  int offset = config.offset(p.box_i, p.box_j);
+  for (int k = 0; k < config.n; ++k) {
+    ParticleIndexType num = grid[offset + k];
+    if (num == jet.index) {
+      return grid[offset + k];
+    }
+  }
+  // handle the case where the jet is not found
+  return grid[config.max_i * config.max_j * config.n];
+}
 #pragma endregion
 
 #pragma region kernels
@@ -429,61 +442,52 @@ __global__ void reduce_recombine(
     min = sdata[0];
     if (threadIdx.x == 0) {
       //printf("will recombine pseudojets %d and %d with distance %f\n", min.i, min.j, min.distance);
-      PseudoJet jet_i, jet_j;
-
-      EtaPhi p1, p2;
       if (min.i == min.j) {
-        jet_j = jets[min.j];
-        p1 = points[min.j];
-        remove_from_grid(config, grid, jet_j, p1);
-        if (min.j != n - 1)
-          remove_from_grid(config, grid, jets[n - 1], points[n - 1]);
+        // remove the pseudojet jets[min.j] from the grid and promote it to jet status
+        PseudoJet jet = jets[min.j];
+        EtaPhi point = points[min.j];
+        remove_from_grid(config, grid, jet, point);
+        jet.isJet = true;
 
-        jets[min.j] = jets[n - 1];
-        points[min.j] = points[n - 1];
-
-        jets[min.j].index = min.j;
-
-        jet_j.isJet = true;
-        jet_j.index = n - 1;
-        jets[n - 1] = jet_j;
-        points[n - 1] = p1;
-
+        // move the last pseudojet to position min.j
         if (min.j != n - 1) {
-          add_to_grid(config, grid, jets[min.j], points[min.j]);
+          jet_in_grid(config, grid, jets[n - 1], points[n - 1]) = min.j;
+          jets[min.j] = jets[n - 1];
+          jets[min.j].index = min.j;
+          points[min.j] = points[n - 1];
         }
+
+        // move the jet to the end of the list
+        jet.index = n - 1;
+        jets[n - 1] = jet;
+        points[n - 1] = point;
 
       } else {
-        jet_i = jets[min.i];
-        jet_j = jets[min.j];
+        remove_from_grid(config, grid, jets[min.i], points[min.i]);
+        remove_from_grid(config, grid, jets[min.j], points[min.j]);
 
-        remove_from_grid(config, grid, jet_i, points[min.i]);
-        remove_from_grid(config, grid, jet_j, points[min.j]);
+        // recombine the two pseudojets
+        PseudoJet jet;
+        jet.px = jets[min.i].px + jets[min.j].px;
+        jet.py = jets[min.i].py + jets[min.j].py;
+        jet.pz = jets[min.i].pz + jets[min.j].pz;
+        jet.E  = jets[min.i].E  + jets[min.j].E;
+        jet.index = min.i;
+
+        EtaPhi point = _set_jet(jet);
+        point.box_i = config.i(point.eta);
+        point.box_j = config.j(point.phi);
+
+        jets[min.i] = jet;
+        points[min.i] = point;
+        add_to_grid(config, grid, jet, point);
+
+        // move the last pseudojet to position min.j
         if (min.j != n - 1) {
-          remove_from_grid(config, grid, jets[n - 1], points[n - 1]);
-        }
-
-        jet_i.px += jet_j.px;
-        jet_i.py += jet_j.py;
-        jet_i.pz += jet_j.pz;
-        jet_i.E += jet_j.E;
-        p2 = _set_jet(jet_i);
-
-        p2.box_i = config.i(p2.eta);
-        p2.box_j = config.j(p2.phi);
-
-        jet_i.index = min.i;
-
-        jets[min.i] = jet_i;
-        points[min.i] = p2;
-
-        jets[min.j] = jets[n - 1];
-        points[min.j] = points[n - 1];
-        jets[min.j].index = min.j;
-
-        add_to_grid(config, grid, jet_i, p2);
-        if (min.j != n - 1) {
-          add_to_grid(config, grid, jets[min.j], points[min.j]);
+          jet_in_grid(config, grid, jets[n - 1], points[n - 1]) = min.j;
+          jets[min.j] = jets[n - 1];
+          jets[min.j].index = min.j;
+          points[min.j] = points[n - 1];
         }
       }
     }
