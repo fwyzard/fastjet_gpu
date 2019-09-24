@@ -211,21 +211,21 @@ __device__ Dist minimum_in_cell(Grid const &config,
 
 __device__ void remove_from_grid(Grid const &config, ParticleIndexType *grid, PseudoJet &jet, const EtaPhi &p) {
   // Remove an element from a grid cell, and shift all following elements to fill the gap
-  int k = 0;
   int offset = config.offset(p.box_i, p.box_j);
-  ParticleIndexType num = grid[offset + k];
-  bool shift = false;
-
-  while (num != -1) {
-    if (jet.index == num)
-      shift = true;
-    if (shift) {
-      grid[offset + k] = grid[offset + k + 1];
+  int first, last;
+  for (int k = 0; k < config.n; ++k) {
+    ParticleIndexType num = grid[offset + k];
+    if (num == jet.index) {
+      first = k;
+    } else if (num == -1) {
+      last = k;
+      break;
     }
-    k++;
-
-    num = grid[offset + k];
   }
+  if (first != last - 1) {
+    grid[offset + first] = grid[offset + last - 1];
+  }
+  grid[offset + last - 1] = -1;
 }
 
 __device__ void add_to_grid(Grid const &config, ParticleIndexType *grid, const PseudoJet &jet, const EtaPhi &p) {
