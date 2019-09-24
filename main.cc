@@ -65,19 +65,41 @@ bool read_next_event(std::istream& input, std::vector<PseudoJet>& particles) {
   return (not particles.empty());
 }
 
-void print_jets(std::vector<PseudoJet> const& jets) {
-  std::cout << std::fixed << std::setprecision(6);
+void print_jets(std::vector<PseudoJet> const& jets, bool cartesian = false) {
+  std::cout << std::fixed << std::setprecision(8);
+  int i = 0;
   for (auto const& jet : jets) {
-    std::cout << std::setw(16) << jet.px << std::setw(16) << jet.py << std::setw(16) << jet.pz << std::setw(16) << jet.E
-              << std::endl;
+    if (cartesian) {
+      // print px, py, pz, E
+      std::cout << std::setw(5) << i++ << std::setw(16) << jet.px << std::setw(16) << jet.py << std::setw(16) << jet.pz << std::setw(16) << jet.E << std::endl;
+    } else {
+      // print eta, phi, pT
+      double pT = std::hypot(jet.px, jet.py);
+      double phi = atan2(jet.py, jet.px);
+      while (phi > 2*M_PI) {
+        phi -= 2*M_PI;
+      }
+      while (phi < 0.) {
+        phi += 2*M_PI;
+      }
+      double effective_m2 = std::max(0.0, (jet.E + jet.pz) * (jet.E - jet.pz) - pT * pT);
+      double E_plus_pz = jet.E + std::abs(jet.pz);
+      double eta = 0.5 * std::log((pT * pT + effective_m2) / (E_plus_pz * E_plus_pz));
+      if (jet.pz > 0) {
+        eta = -eta;
+      }
+      std::cout << std::setw(5) << i++ << std::setw(16) << eta << std::setw(16) << phi << std::setw(16) << pT << std::endl;
+    }
   }
   std::cout << std::endl;
 }
 
 int main(int argc, const char* argv[]) {
-  double ptmin = 0.0;  // GeV
-  double r = 1.0;      // clustering radius
+  double ptmin = 0.0;           // GeV
+  double r = 1.0;               // clustering radius
+  Scheme scheme = Scheme::Kt;   // recombination scheme
   bool sort = true;
+  bool cartesian = false;
   int repetitions = 1;
 
   initialise();
@@ -100,8 +122,8 @@ int main(int argc, const char* argv[]) {
       }
     } else
 
-        // -r, -R
-        if (std::strcmp(argv[i], "-r") == 0 or std::strcmp(argv[i], "-R") == 0) {
+    // -r, -R
+    if (std::strcmp(argv[i], "-r") == 0 or std::strcmp(argv[i], "-R") == 0) {
       ++i;
       if (i >= argc) {
         // error
@@ -117,8 +139,8 @@ int main(int argc, const char* argv[]) {
       }
     } else
 
-        // --repeat, -repeat
-        if (std::strcmp(argv[i], "--repeat") == 0 or std::strcmp(argv[i], "-repeat") == 0) {
+    // --repeat, -repeat
+    if (std::strcmp(argv[i], "--repeat") == 0 or std::strcmp(argv[i], "-repeat") == 0) {
       ++i;
       if (i >= argc) {
         // error
@@ -134,9 +156,34 @@ int main(int argc, const char* argv[]) {
       }
     } else
 
-        // --sort, -s
-        if (std::strcmp(argv[i], "--sort") == 0 or std::strcmp(argv[i], "-s") == 0) {
+    // --sort, -s
+    if (std::strcmp(argv[i], "--sort") == 0 or std::strcmp(argv[i], "-s") == 0) {
       sort = true;
+    } else
+
+    // --cartesian
+    if (std::strcmp(argv[i], "--cartesian") == 0) {
+      cartesian = true;
+    } else
+
+    // --polar
+    if (std::strcmp(argv[i], "--polar") == 0) {
+      cartesian = false;
+    } else
+
+    // --kt, -kt
+    if (std::strcmp(argv[i], "--kt") == 0 or std::strcmp(argv[i], "-kt") == 0) {
+      scheme = Scheme::Kt;
+    } else
+
+    // --anti-kt, -antikt
+    if (std::strcmp(argv[i], "--anti-kt") == 0 or std::strcmp(argv[i], "-antikt") == 0) {
+      scheme = Scheme::AntiKt;
+    } else
+
+    // --cambridge-aachen, -cam
+    if (std::strcmp(argv[i], "--cambridge-aachen") == 0 or std::strcmp(argv[i], "-cam") == 0){
+      scheme = Scheme::CambridgeAachen;
     } else
 
     // unknown option
@@ -169,7 +216,7 @@ int main(int argc, const char* argv[]) {
       cudaCheck(cudaMemcpy(particles_d, particles.data(), sizeof(PseudoJet) * particles.size(), cudaMemcpyDefault));
 
       // run the clustering algorithm and measure its running time
-      cluster(particles_d, particles.size(), r);
+      cluster(particles_d, particles.size(), scheme, r);
 
       // copy the clustered jets back to the CPU
       jets.resize(particles.size());
@@ -207,7 +254,7 @@ int main(int argc, const char* argv[]) {
     // free GPU memory
     cudaCheck(cudaFree(particles_d));
 
-    print_jets(jets);
+    print_jets(jets, cartesian);
 
     std::cout << std::defaultfloat;
     std::cout << "clustered " << particles.size() << " particles into " << jets.size() << " jets above " << ptmin
