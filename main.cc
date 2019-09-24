@@ -227,7 +227,8 @@ int main(int argc, const char* argv[]) {
   std::vector<PseudoJet> jets;
 
   while (read_next_event(filename.empty() ? std::cin : input, particles)) {
-    std::cout << "found " << particles.size() << " particles" << std::endl;
+    if (not output_csv)
+      std::cout << "found " << particles.size() << " particles" << std::endl;
 
     // allocate GPU memory for the input particles
     PseudoJet* particles_d;
@@ -286,7 +287,8 @@ int main(int argc, const char* argv[]) {
     // free GPU memory
     cudaCheck(cudaFree(particles_d));
 
-    print_jets(jets, cartesian);
+    if (not output_csv)
+      print_jets(jets, cartesian);
 
     std::cout << std::defaultfloat;
 
@@ -294,7 +296,7 @@ int main(int argc, const char* argv[]) {
       std::cout << "clustered " << particles.size() << " particles into " << jets.size() << " jets above " << ptmin
                 << " GeV";
     } else {
-      std::out << particles.size() << ',' << jets.size() << ',';
+      std::cout << particles.size() << ',' << jets.size() << ',';
     }
     std::cout << std::fixed;
     double mean = sum / repetitions;
@@ -313,7 +315,7 @@ int main(int argc, const char* argv[]) {
       if (not output_csv) {
         std::cout << " in " << mean << " ms" << std::endl;
       } else {
-        std::cout << mean << ',' << sigma << std::endl;
+        std::cout << mean << std::endl;
       }
     }
     std::cout.precision(precision);
