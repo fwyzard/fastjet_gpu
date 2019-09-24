@@ -221,6 +221,8 @@ __device__ void remove_from_grid(Grid const &config, ParticleIndexType *grid, Ps
       last = k;
       break;
     }
+    // FIXME handle the case where the jet is not found
+    // FIXME handle the case where the cell is full
   }
   if (first != last - 1) {
     grid[offset + first] = grid[offset + last - 1];
@@ -230,18 +232,15 @@ __device__ void remove_from_grid(Grid const &config, ParticleIndexType *grid, Ps
 
 __device__ void add_to_grid(Grid const &config, ParticleIndexType *grid, const PseudoJet &jet, const EtaPhi &p) {
   // Add a jet as the last element of a grid cell
-  int k = 0;
   int offset = config.offset(p.box_i, p.box_j);
-  int num = grid[offset + k];
-
-  while (true) {
-    num = grid[offset + k];
+  for (int k = 0; k < config.n; ++k) {
+    ParticleIndexType num = grid[offset + k];
     if (num == -1) {
       grid[offset + k] = jet.index;         // FIXME add a check that jet.index fits in ParticleIndexType
       grid[offset + k + 1] = -1;
       break;
     }
-    k++;
+    // FIXME handle the case where the cell is full
   }
 }
 #pragma endregion
