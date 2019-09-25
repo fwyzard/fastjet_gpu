@@ -103,6 +103,7 @@ int main(int argc, const char* argv[]) {
   bool cartesian = false;
   int repetitions = 1;
   std::string filename;         // read data from file instead of standard input
+  bool output_csv = false;
 
   for (unsigned int i = 1; i < argc; ++i) {
     // --ptmin, -p
@@ -201,6 +202,10 @@ int main(int argc, const char* argv[]) {
         return 1;
       }
       filename = argv[i];
+    } else
+
+	    if (std::strcmp(argv[i], "--csv") == 0 or std::strcmp(argv[i], "-csv") == 0) {
+      output_csv = true;
     } else
 
     // unknown option
