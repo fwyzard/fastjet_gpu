@@ -205,7 +205,8 @@ int main(int argc, const char* argv[]) {
       }
       filename = argv[i];
     } else
-	// --csv, -csv
+
+        // --csv, -csv
         if (std::strcmp(argv[i], "--csv") == 0 or std::strcmp(argv[i], "-csv") == 0) {
       output_csv = true;
     } else
