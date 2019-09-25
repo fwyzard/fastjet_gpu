@@ -1,38 +1,43 @@
 # fastjet_gpu
-Porting the fastjet software package to work on GPUS.
+Porting [FastJet](http://fastjet.fr/) software package to CUDA.
 
-### Compile tri_matrix
-To compile tri_matrix.cu you will need CUDA [CUB library](https://nvlabs.github.io/cub/).
-Tested with CUB v1.8.0
-```
-nvcc -I "path-to-cub-library" file.cu -o file 
-```
+Using FastJet 3.3.2
 
-### Compile Others
+# Compile 
 ```
-nvcc file.cu -o file
+make
 ```
 
-### Run
+# Run
 ```
-./file < single-event.dat
+./[grid|n_array|tri_matrix] [OPTION] < [FILE] 
 ```
-
-### Enable Output and Benchmarking (Only for tri_matrix.cu)
-Inside tri_matrix.cu
-change the preprocessor directives in the beginning of the file.
+or 
 ```
-#define OUTPUT_JETS false
-#define BENCH true
+./[grid|n_array|tri_matrix] [OPTION] -file [FILE]
 ```
-
-### Multiple events (Only for tri_matrix.cu)
-Change the `num_events` variable to the number of events needed.
+Example
 ```
- // Increase the number to process more events
-int num_events = 1;
-
-// Loop events
-for (int event = 0; event < num_events; event++) {
+./tri_matrix -antikt -r 0.4 -p 1.0 < hltAK4CaloJets.dat
 ```
 
+# Options
+`--ptmin | -p` minimum pT default `0.0`.
+
+`-r` | `-R` clustering radius default `1.0`.
+
+`--repeat` | `-repeat` repeat execution n times, default `1`.
+
+`--sort` | `-s` sort the sort the jets by decreasing pT default `true`.
+
+`--cartesian` output px, py, pz, E
+
+`--polar` output eta, phi, pT
+
+`--kt` | `-kt`
+
+`--anti-kt` | `-antikt`
+
+`--cambridge-aachen` | `-cam`
+
+`--file` | `-f` input file name.
