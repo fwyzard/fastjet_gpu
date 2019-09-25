@@ -41,3 +41,5 @@ Example
 `--cambridge-aachen` | `-cam`
 
 `--file` | `-f` input file name.
+
+`--csv` | `-csv` output timing data in csv format.
