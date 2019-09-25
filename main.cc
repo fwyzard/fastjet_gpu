@@ -264,20 +264,22 @@ int main(int argc, const char* argv[]) {
         return (not jet.isJet) or (jet.px * jet.px + jet.py * jet.py < ptmin * ptmin);
       });
       jets.erase(last, jets.end());
-
-      if (ptmin > 0.) {
-        std::cout << "found " << jets.size() << " jets above " << ptmin << " GeV in " << milliseconds << " ms"
+      
+      if (not output_csv) {
+        if (ptmin > 0.) {
+          std::cout << "found " << jets.size() << " jets above " << ptmin << " GeV in " << milliseconds << " ms"
                   << std::endl;
-      } else {
-        std::cout << "found " << jets.size() << " jets in " << milliseconds << " ms" << std::endl;
-      }
+        } else {
+          std::cout << "found " << jets.size() << " jets in " << milliseconds << " ms" << std::endl;
+        }
 
-      // optionally, sort the jets by decreasing pT
-      if (sort) {
-        std::sort(jets.begin(), jets.end(), [](auto const& a, auto const& b) {
-          return (a.px * a.px + a.py * a.py > b.px * b.px + b.py * b.py);
-        });
-      }
+        // optionally, sort the jets by decreasing pT
+        if (sort) {
+          std::sort(jets.begin(), jets.end(), [](auto const& a, auto const& b) {
+            return (a.px * a.px + a.py * a.py > b.px * b.px + b.py * b.py);
+          });
+         }
+       }
     }
 
     // free GPU memory
