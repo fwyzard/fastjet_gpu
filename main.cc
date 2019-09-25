@@ -72,16 +72,17 @@ void print_jets(std::vector<PseudoJet> const& jets, bool cartesian = false) {
   for (auto const& jet : jets) {
     if (cartesian) {
       // print px, py, pz, E
-      std::cout << std::setw(5) << i++ << std::setw(16) << jet.px << std::setw(16) << jet.py << std::setw(16) << jet.pz << std::setw(16) << jet.E << std::endl;
+      std::cout << std::setw(5) << i++ << std::setw(16) << jet.px << std::setw(16) << jet.py << std::setw(16) << jet.pz
+                << std::setw(16) << jet.E << std::endl;
     } else {
       // print eta, phi, pT
       double pT = std::hypot(jet.px, jet.py);
       double phi = atan2(jet.py, jet.px);
-      while (phi > 2*M_PI) {
-        phi -= 2*M_PI;
+      while (phi > 2 * M_PI) {
+        phi -= 2 * M_PI;
       }
       while (phi < 0.) {
-        phi += 2*M_PI;
+        phi += 2 * M_PI;
       }
       double effective_m2 = std::max(0.0, (jet.E + jet.pz) * (jet.E - jet.pz) - pT * pT);
       double E_plus_pz = jet.E + std::abs(jet.pz);
@@ -89,20 +90,21 @@ void print_jets(std::vector<PseudoJet> const& jets, bool cartesian = false) {
       if (jet.pz > 0) {
         eta = -eta;
       }
-      std::cout << std::setw(5) << i++ << std::setw(16) << eta << std::setw(16) << phi << std::setw(16) << pT << std::endl;
+      std::cout << std::setw(5) << i++ << std::setw(16) << eta << std::setw(16) << phi << std::setw(16) << pT
+                << std::endl;
     }
   }
   std::cout << std::endl;
 }
 
 int main(int argc, const char* argv[]) {
-  double ptmin = 0.0;           // GeV
-  double r = 1.0;               // clustering radius
-  Scheme scheme = Scheme::Kt;   // recombination scheme
+  double ptmin = 0.0;          // GeV
+  double r = 1.0;              // clustering radius
+  Scheme scheme = Scheme::Kt;  // recombination scheme
   bool sort = true;
   bool cartesian = false;
   int repetitions = 1;
-  std::string filename;         // read data from file instead of standard input
+  std::string filename;  // read data from file instead of standard input
   bool output_csv = false;
 
   for (unsigned int i = 1; i < argc; ++i) {
@@ -111,7 +113,7 @@ int main(int argc, const char* argv[]) {
       ++i;
       if (i >= argc) {
         // error
-        std::cerr << "Missing argument to option " << argv[i-1] << std::endl;
+        std::cerr << "Missing argument to option " << argv[i - 1] << std::endl;
         return 1;
       }
       char* stop;
@@ -120,17 +122,17 @@ int main(int argc, const char* argv[]) {
         ptmin = arg;
       } else {
         // error
-        std::cerr << "Error while parsing argument to option " << argv[i-1] << std::endl;
+        std::cerr << "Error while parsing argument to option " << argv[i - 1] << std::endl;
         return 1;
       }
     } else
 
-    // -r, -R
-    if (std::strcmp(argv[i], "-r") == 0 or std::strcmp(argv[i], "-R") == 0) {
+        // -r, -R
+        if (std::strcmp(argv[i], "-r") == 0 or std::strcmp(argv[i], "-R") == 0) {
       ++i;
       if (i >= argc) {
         // error
-        std::cerr << "Missing argument to option " << argv[i-1] << std::endl;
+        std::cerr << "Missing argument to option " << argv[i - 1] << std::endl;
         return 1;
       }
       char* stop;
@@ -139,17 +141,17 @@ int main(int argc, const char* argv[]) {
         r = arg;
       } else {
         // error
-        std::cerr << "Error while parsing argument to option " << argv[i-1] << std::endl;
+        std::cerr << "Error while parsing argument to option " << argv[i - 1] << std::endl;
         return 1;
       }
     } else
 
-    // --repeat, -repeat
-    if (std::strcmp(argv[i], "--repeat") == 0 or std::strcmp(argv[i], "-repeat") == 0) {
+        // --repeat, -repeat
+        if (std::strcmp(argv[i], "--repeat") == 0 or std::strcmp(argv[i], "-repeat") == 0) {
       ++i;
       if (i >= argc) {
         // error
-        std::cerr << "Missing argument to option " << argv[i-1] << std::endl;
+        std::cerr << "Missing argument to option " << argv[i - 1] << std::endl;
         return 1;
       }
       char* stop;
@@ -158,53 +160,53 @@ int main(int argc, const char* argv[]) {
         repetitions = arg;
       } else {
         // error
-        std::cerr << "Error while parsing argument to option " << argv[i-1] << std::endl;
+        std::cerr << "Error while parsing argument to option " << argv[i - 1] << std::endl;
         return 1;
       }
     } else
 
-    // --sort, -s
-    if (std::strcmp(argv[i], "--sort") == 0 or std::strcmp(argv[i], "-s") == 0) {
+        // --sort, -s
+        if (std::strcmp(argv[i], "--sort") == 0 or std::strcmp(argv[i], "-s") == 0) {
       sort = true;
     } else
 
-    // --cartesian
-    if (std::strcmp(argv[i], "--cartesian") == 0) {
+        // --cartesian
+        if (std::strcmp(argv[i], "--cartesian") == 0) {
       cartesian = true;
     } else
 
-    // --polar
-    if (std::strcmp(argv[i], "--polar") == 0) {
+        // --polar
+        if (std::strcmp(argv[i], "--polar") == 0) {
       cartesian = false;
     } else
 
-    // --kt, -kt
-    if (std::strcmp(argv[i], "--kt") == 0 or std::strcmp(argv[i], "-kt") == 0) {
+        // --kt, -kt
+        if (std::strcmp(argv[i], "--kt") == 0 or std::strcmp(argv[i], "-kt") == 0) {
       scheme = Scheme::Kt;
     } else
 
-    // --anti-kt, -antikt
-    if (std::strcmp(argv[i], "--anti-kt") == 0 or std::strcmp(argv[i], "-antikt") == 0) {
+        // --anti-kt, -antikt
+        if (std::strcmp(argv[i], "--anti-kt") == 0 or std::strcmp(argv[i], "-antikt") == 0) {
       scheme = Scheme::AntiKt;
     } else
 
-    // --cambridge-aachen, -cam
-    if (std::strcmp(argv[i], "--cambridge-aachen") == 0 or std::strcmp(argv[i], "-cam") == 0){
+        // --cambridge-aachen, -cam
+        if (std::strcmp(argv[i], "--cambridge-aachen") == 0 or std::strcmp(argv[i], "-cam") == 0) {
       scheme = Scheme::CambridgeAachen;
     } else
 
-    // --file, -f
-    if (std::strcmp(argv[i], "--file") == 0 or std::strcmp(argv[i], "-f") == 0) {
+        // --file, -f
+        if (std::strcmp(argv[i], "--file") == 0 or std::strcmp(argv[i], "-f") == 0) {
       ++i;
       if (i >= argc) {
         // error
-        std::cerr << "Missing argument to option " << argv[i-1] << std::endl;
+        std::cerr << "Missing argument to option " << argv[i - 1] << std::endl;
         return 1;
       }
       filename = argv[i];
     } else
-
-	    if (std::strcmp(argv[i], "--csv") == 0 or std::strcmp(argv[i], "-csv") == 0) {
+	// --csv, -csv
+        if (std::strcmp(argv[i], "--csv") == 0 or std::strcmp(argv[i], "-csv") == 0) {
       output_csv = true;
     } else
 
@@ -264,11 +266,11 @@ int main(int argc, const char* argv[]) {
         return (not jet.isJet) or (jet.px * jet.px + jet.py * jet.py < ptmin * ptmin);
       });
       jets.erase(last, jets.end());
-      
+
       if (not output_csv) {
         if (ptmin > 0.) {
           std::cout << "found " << jets.size() << " jets above " << ptmin << " GeV in " << milliseconds << " ms"
-                  << std::endl;
+                    << std::endl;
         } else {
           std::cout << "found " << jets.size() << " jets in " << milliseconds << " ms" << std::endl;
         }
@@ -278,8 +280,8 @@ int main(int argc, const char* argv[]) {
           std::sort(jets.begin(), jets.end(), [](auto const& a, auto const& b) {
             return (a.px * a.px + a.py * a.py > b.px * b.px + b.py * b.py);
           });
-         }
-       }
+        }
+      }
     }
 
     // free GPU memory
@@ -312,7 +314,6 @@ int main(int argc, const char* argv[]) {
       } else {
         std::cout << mean << std::endl;
       }
-
     }
     std::cout.precision(precision);
     std::cout << std::defaultfloat;
