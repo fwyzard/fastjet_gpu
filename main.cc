@@ -24,6 +24,11 @@ void initialise() {
   int value;
   cudaDeviceGetAttribute(&value, cudaDevAttrMaxSharedMemoryPerBlock, 0);
   std::cout << "  - maximum shared memory per block: " << value / 1024 << " kB" << std::endl;
+
+  cudaCheck(cudaDeviceSetLimit(cudaLimitPrintfFifoSize, 10*1024*1024));
+  size_t size;
+  cudaCheck(cudaDeviceGetLimit(&size, cudaLimitPrintfFifoSize));
+  std::cout << "  - kernel printf buffer size:       " << size / 1024 << " kB" << std::endl;
 }
 
 bool read_next_event(std::istream& input, std::vector<PseudoJet>& particles) {
