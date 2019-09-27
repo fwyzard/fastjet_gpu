@@ -312,7 +312,11 @@ int main(int argc, const char* argv[]) {
       double sigma = std::sqrt((sum2 - sum * sum / repetitions) / (repetitions - 1));
       precision = std::max((int)-std::log10(sigma / 2.) + 1, 0);
       precision = std::cout.precision(precision);
-      std::cout << " in " << mean << " +/- " << sigma << " ms" << std::endl;
+      if (not output_csv) {
+        std::cout << " in " << mean << " +/- " << sigma << " ms" << std::endl;
+      } else {
+        std::cout << mean << ',' << sigma << std::endl;
+      }
     } else {
       precision = std::cout.precision(1);
       if (not output_csv) {
