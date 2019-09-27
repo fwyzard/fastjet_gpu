@@ -136,20 +136,22 @@ struct dist_compare {
 };
 
 __global__ void set_distances(
-    PseudoJetExt *jets, double *distances, Dist *g_min, int num_particles, Scheme scheme, double one_over_r2) {
+    PseudoJetExt *jets, Dist *distances, Dist *g_min, int num_particles, Scheme scheme, double one_over_r2) {
   unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
   if (tid >= num_particles)
     return;
 
-  int i, j;
-  tid_to_ij(i, j, tid);
+  Dist dst;
+  tid_to_ij(dst.i, dst.j, tid);
 
-  if (i == j) {
-    distances[tid] = jets[i].get_diB(scheme);
+  if (dst.i == dst.j) {
+    dst.d = jets[dst.i].get_diB(scheme);
   } else {
-    distances[tid] = yij_distance(jets[i], jets[j], scheme, one_over_r2);
+    dst.d = yij_distance(jets[dst.i], jets[dst.j], scheme, one_over_r2);
   }
+
+  distances[tid] = dst;
 
   if (tid == 0) {
     g_min->i = -1;
@@ -157,7 +159,7 @@ __global__ void set_distances(
 }
 
 __global__ void reduction_min(PseudoJetExt *jets,
-                              double *distances,
+                              Dist *distances,
                               Dist *distances_out,
                               Dist *g_min,
                               int const distances_array_size,
@@ -171,27 +173,23 @@ __global__ void reduction_min(PseudoJetExt *jets,
 
   unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
-  Dist dst;
-  tid_to_ij(dst.i, dst.j, tid);
+  Dist dst, min;
 
-  Dist min;
-
+  dst = distances[tid];
   if (g_min->i == dst.i || g_min->i == dst.j || g_min->j == dst.i || g_min->j == dst.j) {
     if (tid >= distances_array_size || dst.j >= num_particles || dst.i >= num_particles) {
       dst.d = MAX_DOUBLE;
     } else if (dst.i == dst.j) {
       dst.d = jets[dst.i].get_diB(scheme);
-      distances[tid] = dst.d;
     } else {
       dst.d = yij_distance(jets[dst.i], jets[dst.j], scheme, one_over_r2);
-      distances[tid] = dst.d;
     }
+    
+    distances[tid] = dst;
   } else {
     if (tid >= distances_array_size || dst.j >= num_particles || dst.i >= num_particles) {
       dst.d = MAX_DOUBLE;
-    } else {
-      dst.d = distances[tid];
-    }
+    } 
   }
 
   // printf("%4d%4d%4d%4d%20.8e\n", blockIdx.x, num_particles, dst.i, dst.j, dst.d);
@@ -285,8 +283,8 @@ void cluster(PseudoJet *particles, int size, Scheme scheme, double r) {
   cudaCheck(cudaMalloc(&d_jets, size * sizeof(PseudoJetExt)));
   init<<<8, 512>>>(particles, d_jets, size);
 
-  double *d_distances = 0;
-  cudaCheck(cudaMalloc((void **)&d_distances, size * (size + 1) / 2 * sizeof(double)));
+  Dist *d_distances = 0;
+  cudaCheck(cudaMalloc((void **)&d_distances, size * (size + 1) / 2 * sizeof(Dist)));
 
   Dist *d_out = 0;
   cudaCheck(cudaMalloc((void **)&d_out, size * sizeof(Dist)));
