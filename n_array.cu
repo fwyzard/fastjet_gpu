@@ -98,6 +98,9 @@ __device__ double yij_distance(PseudoJetExt &jet1, PseudoJetExt &jet2, Scheme sc
       return min(jet1.inv_diB, jet2.inv_diB) * plain_distance(jet1, jet2) * one_over_r2;
       break;
   }
+
+  // never reached
+  return 0.;
 }
 
 __device__ void tid_to_ij(int &i, int &j, int tid) {
