@@ -377,6 +377,21 @@ __global__ void reduce_recombine(Grid config,
           if (left) {
             min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i - 1, j, one_over_r2);
           }
+
+          if (p.box_j == config.max_j - 2) {
+            // Up Up
+            min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i, 0, one_over_r2);
+
+            // Up Up Right
+            if (right) {
+              min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i + 1, 0, one_over_r2);
+            }
+
+            // Up Up Left
+            if (left) {
+              min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i - 1, 0, one_over_r2);
+            }
+          }
         }
 
         // check if (p.box_j - 1) would underflow below 0
