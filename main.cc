@@ -25,16 +25,13 @@ void initialise() {
   cudaDeviceGetAttribute(&value, cudaDevAttrMaxSharedMemoryPerBlock, 0);
   std::cout << "  - maximum shared memory per block: " << value / 1024 << " kB" << std::endl;
 
-  cudaCheck(cudaDeviceSetLimit(cudaLimitPrintfFifoSize, 10*1024*1024));
+  cudaCheck(cudaDeviceSetLimit(cudaLimitPrintfFifoSize, 10 * 1024 * 1024));
   size_t size;
   cudaCheck(cudaDeviceGetLimit(&size, cudaLimitPrintfFifoSize));
   std::cout << "  - kernel printf buffer size:       " << size / 1024 << " kB" << std::endl;
 }
 
 bool read_next_event(std::istream& input, std::vector<PseudoJet>& particles) {
-  // clear the output buffer
-  particles.clear();
-
   // clear the input status flags
   input.clear();
 
@@ -44,7 +41,8 @@ bool read_next_event(std::istream& input, std::vector<PseudoJet>& particles) {
   }
 
   // read the input one line at a time
-  int i = 0;
+  int i = particles.size();
+  bool found = false;
   std::string buffer;
   while (std::getline(input, buffer).good()) {
     std::istringstream line(buffer);
@@ -55,7 +53,6 @@ bool read_next_event(std::istream& input, std::vector<PseudoJet>& particles) {
     //std::cout << "reading: " << px << ", " << py << ", " << pz << ", " << E << std::endl;
 
     if (line.fail()) {
-      //std::cout << "no more particles" << std::endl;
       // check for a comment or empty line
       if (not buffer.empty() and buffer[0] != '#') {
         throw std::runtime_error("Error while parsing particles:\n" + buffer);
@@ -65,10 +62,26 @@ bool read_next_event(std::istream& input, std::vector<PseudoJet>& particles) {
 
     //std::cout << "found a particle" << std::endl;
     particles.push_back({i++, false, px, py, pz, E});
+    found = true;
   }
 
   // return false if there was no event to read
-  return (not particles.empty());
+  return (found);
+}
+
+/* Read the next N events from the input stream, and returns the number of events actually read.
+ *
+ * Pass 0 to read all events in the stream.
+ */
+int read_n_events(std::istream& input, std::vector<PseudoJet>& particles, int n) {
+  // clear the output buffer
+  particles.clear();
+
+  int events = 0;
+  while ((n == 0 or events < n) and read_next_event(input, particles))
+    ++events;
+
+  return events;
 }
 
 void print_jets(std::vector<PseudoJet> const& jets, bool cartesian = false) {
@@ -109,6 +122,7 @@ int main(int argc, const char* argv[]) {
   bool sort = true;
   bool cartesian = false;
   int repetitions = 1;
+  int combine = 1;
   std::string filename;  // read data from file instead of standard input
   bool output_csv = false;
 
@@ -132,8 +146,8 @@ int main(int argc, const char* argv[]) {
       }
     } else
 
-        // -r, -R
-        if (std::strcmp(argv[i], "-r") == 0 or std::strcmp(argv[i], "-R") == 0) {
+    // -r, -R
+    if (std::strcmp(argv[i], "-r") == 0 or std::strcmp(argv[i], "-R") == 0) {
       ++i;
       if (i >= argc) {
         // error
@@ -151,8 +165,8 @@ int main(int argc, const char* argv[]) {
       }
     } else
 
-        // --repeat, -repeat
-        if (std::strcmp(argv[i], "--repeat") == 0 or std::strcmp(argv[i], "-repeat") == 0) {
+    // --repeat, -repeat
+    if (std::strcmp(argv[i], "--repeat") == 0 or std::strcmp(argv[i], "-repeat") == 0) {
       ++i;
       if (i >= argc) {
         // error
@@ -170,38 +184,38 @@ int main(int argc, const char* argv[]) {
       }
     } else
 
-        // --sort, -s
-        if (std::strcmp(argv[i], "--sort") == 0 or std::strcmp(argv[i], "-s") == 0) {
+    // --sort, -s
+    if (std::strcmp(argv[i], "--sort") == 0 or std::strcmp(argv[i], "-s") == 0) {
       sort = true;
     } else
 
-        // --cartesian
-        if (std::strcmp(argv[i], "--cartesian") == 0) {
+    // --cartesian
+    if (std::strcmp(argv[i], "--cartesian") == 0) {
       cartesian = true;
     } else
 
-        // --polar
-        if (std::strcmp(argv[i], "--polar") == 0) {
+    // --polar
+    if (std::strcmp(argv[i], "--polar") == 0) {
       cartesian = false;
     } else
 
-        // --kt, -kt
-        if (std::strcmp(argv[i], "--kt") == 0 or std::strcmp(argv[i], "-kt") == 0) {
+    // --kt, -kt
+    if (std::strcmp(argv[i], "--kt") == 0 or std::strcmp(argv[i], "-kt") == 0) {
       scheme = Scheme::Kt;
     } else
 
-        // --anti-kt, -antikt
-        if (std::strcmp(argv[i], "--anti-kt") == 0 or std::strcmp(argv[i], "-antikt") == 0) {
+    // --anti-kt, -antikt
+    if (std::strcmp(argv[i], "--anti-kt") == 0 or std::strcmp(argv[i], "-antikt") == 0) {
       scheme = Scheme::AntiKt;
     } else
 
-        // --cambridge-aachen, -cam
-        if (std::strcmp(argv[i], "--cambridge-aachen") == 0 or std::strcmp(argv[i], "-cam") == 0) {
+    // --cambridge-aachen, -cam
+    if (std::strcmp(argv[i], "--cambridge-aachen") == 0 or std::strcmp(argv[i], "-cam") == 0) {
       scheme = Scheme::CambridgeAachen;
     } else
 
-        // --file, -f
-        if (std::strcmp(argv[i], "--file") == 0 or std::strcmp(argv[i], "-f") == 0) {
+    // --file, -f
+    if (std::strcmp(argv[i], "--file") == 0 or std::strcmp(argv[i], "-f") == 0) {
       ++i;
       if (i >= argc) {
         // error
@@ -211,8 +225,27 @@ int main(int argc, const char* argv[]) {
       filename = argv[i];
     } else
 
-        // --csv, -csv
-        if (std::strcmp(argv[i], "--csv") == 0 or std::strcmp(argv[i], "-csv") == 0) {
+    // --combine, -combine
+    if (std::strcmp(argv[i], "--combine") == 0 or std::strcmp(argv[i], "-combine") == 0) {
+      ++i;
+      if (i >= argc) {
+        // error
+        std::cerr << "Missing argument to option " << argv[i - 1] << std::endl;
+        return 1;
+      }
+      char* stop;
+      auto arg = std::strtol(argv[i], &stop, 0);
+      if (stop != argv[i] and arg >= 0) {
+        combine = arg;
+      } else {
+        // error
+        std::cerr << "Error while parsing argument to option " << argv[i - 1] << std::endl;
+        return 1;
+      }
+    } else
+
+    // --csv, -csv
+    if (std::strcmp(argv[i], "--csv") == 0 or std::strcmp(argv[i], "-csv") == 0) {
       output_csv = true;
     } else
 
@@ -232,9 +265,14 @@ int main(int argc, const char* argv[]) {
   std::vector<PseudoJet> particles;
   std::vector<PseudoJet> jets;
 
-  while (read_next_event(filename.empty() ? std::cin : input, particles)) {
-    if (not output_csv)
-      std::cout << "found " << particles.size() << " particles" << std::endl;
+  int events;
+  while (events = read_n_events(filename.empty() ? std::cin : input, particles, combine)) {
+    if (not output_csv) {
+      std::cout << "found " << particles.size() << " particles";
+      if (combine != 1)
+        std::cout << " in " << events << (events == 1 ? " event" : " events");
+      std::cout << std::endl;
+    }
 
     // allocate GPU memory for the input particles
     PseudoJet* particles_d;
