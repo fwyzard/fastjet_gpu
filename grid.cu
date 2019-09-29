@@ -263,30 +263,8 @@ __global__ void set_points(Grid grid, PseudoJet *jets, EtaPhi *points, const Par
     p.box_j = grid.j(p.phi);
     points[tid] = p;
     //printf("particle %3d has (eta,phi,pT) = (%f,%f,%f) and cell (i,j) = (%d,%d)\n", tid, p.eta, p.phi, sqrt(p.diB), p.box_i, p.box_j);
+    add_to_grid(grid, tid, p);
   }
-}
-
-__global__ void set_grid(
-    Grid grid, const EtaPhi *points, const ParticleIndexType n) {
-  GridIndexType tid = threadIdx.x;
-  GridIndexType bid = blockIdx.x;
-
-  int k = 0;
-  EtaPhi p;
-
-  int offset = grid.offset(bid, tid);
-
-  // FIXME add a check that jet.index fits in ParticleIndexType
-  for (ParticleIndexType i = 0; i < n; i++) {
-    p = points[i];
-
-    if (p.box_i == bid and p.box_j == tid) {
-      grid.jets[offset + k] = i;
-      k++;
-    }
-  }
-
-  //printf("cell (%d,%d) has %d elements\n", tid, bid, k);
 }
 
 __global__ void reduce_recombine(Grid grid,
@@ -535,9 +513,6 @@ void cluster(PseudoJet *particles, int size, Scheme scheme, double r) {
   set_points<<<gridSize, blockSize>>>(grid, particles, d_points_ptr, size, scheme);
   cudaCheck(cudaDeviceSynchronize());
 
-  // create grid
-  set_grid<<<grid.max_i, grid.max_j>>>(grid, d_points_ptr, size);
-  cudaCheck(cudaDeviceSynchronize());
 
   {
     cudaFuncAttributes attr;
