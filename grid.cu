@@ -319,8 +319,8 @@ __global__ void reduce_recombine(Grid config,
         min = yij_distance(points, tid, tid, one_over_r2);
         min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i, p.box_j, one_over_r2);
 
-        bool right = true;
-        bool left = true;
+        bool right = p.box_i + 1 < config.max_i;
+        bool left = p.box_i > 0;
         bool up = true;
         bool down = true;
 
@@ -328,13 +328,13 @@ __global__ void reduce_recombine(Grid config,
         EtaPhi bp;
         bp.eta = config.eta_max(p.box_i);
         bp.phi = p.phi;
-        if (min.distance < plain_distance(p, bp)) {
+        if (right and min.distance < plain_distance(p, bp)) {
           right = false;
         }
 
         bp.eta = config.eta_min(p.box_i);
         bp.phi = p.phi;
-        if (min.distance < plain_distance(p, bp)) {
+        if (left and min.distance < plain_distance(p, bp)) {
           left = false;
         }
 
@@ -352,34 +352,49 @@ __global__ void reduce_recombine(Grid config,
         */
 
         // Right
-        if (p.box_i + 1 < config.max_i and right) {
+        if (right) {
           min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i + 1, p.box_j, one_over_r2);
         }
 
         // Left
-        if (p.box_i - 1 >= 0 and left) {
+        if (left) {
           min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i - 1, p.box_j, one_over_r2);
         }
 
-        // check if above config.max_j
-        GridIndexType j = (p.box_j + 1 <= config.max_j) ? p.box_j + 1 : 0;
+        // check if (p.box_j + 1) would overflow config.max_j
+        GridIndexType j = (p.box_j < config.max_j) ? p.box_j + 1 : 0;
 
         // Up
         if (up) {
           min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i, j, one_over_r2);
 
           // Up Right
-          if (p.box_i + 1 < config.max_i and right) {
+          if (right) {
             min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i + 1, j, one_over_r2);
           }
 
           // Up Left
-          if (p.box_i - 1 >= 0 and left) {
+          if (left) {
             min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i - 1, j, one_over_r2);
+          }
+
+          if (p.box_j == config.max_j - 2) {
+            // Up Up
+            min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i, 0, one_over_r2);
+
+            // Up Up Right
+            if (right) {
+              min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i + 1, 0, one_over_r2);
+            }
+
+            // Up Up Left
+            if (left) {
+              min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i - 1, 0, one_over_r2);
+            }
           }
         }
 
-        // check if bellow 0
+        // check if (p.box_j - 1) would underflow below 0
         j = p.box_j - 1 >= 0 ? p.box_j - 1 : config.max_j - 1;
 
         // Down
@@ -387,26 +402,26 @@ __global__ void reduce_recombine(Grid config,
           min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i, j, one_over_r2);
 
           // Down Right
-          if (p.box_i + 1 < config.max_i and right) {
+          if (right) {
             min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i + 1, j, one_over_r2);
           }
 
           // Down Left
-          if (p.box_i - 1 >= 0 and left) {
+          if (left) {
             min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i - 1, j, one_over_r2);
           }
 
-          if (p.box_j - 1 < 0) {
+          if (p.box_j == 0) {
             // Down Down
             min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i, j - 1, one_over_r2);
 
             // Down Down Right
-            if (p.box_i + 1 < config.max_i and right) {
+            if (right) {
               min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i + 1, j - 1, one_over_r2);
             }
 
             // Down Down Left
-            if (p.box_i - 1 >= 0 and left) {
+            if (left) {
               min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i - 1, j - 1, one_over_r2);
             }
           }
