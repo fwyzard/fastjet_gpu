@@ -220,6 +220,7 @@ __device__ void remove_from_grid(Grid const &grid, ParticleIndexType jet, const 
   if (first != last - 1) {
     grid.jets[offset + first] = grid.jets[offset + last - 1];
   }
+  // set the last entry to invalid
   grid.jets[offset + last - 1] = -1;
 }
 
@@ -230,7 +231,6 @@ __device__ void add_to_grid(Grid const &grid, ParticleIndexType jet, const EtaPh
     ParticleIndexType num = grid.jets[offset + k];
     if (num == -1) {
       grid.jets[offset + k] = jet;
-      grid.jets[offset + k + 1] = -1;
       break;
     }
     // FIXME handle the case where the cell is full
@@ -287,7 +287,6 @@ __global__ void set_grid(
     }
   }
 
-  grid.jets[offset + k] = -1;
   //printf("cell (%d,%d) has %d elements\n", tid, bid, k);
 }
 
@@ -517,6 +516,7 @@ void cluster(PseudoJet *particles, int size, Scheme scheme, double r) {
   // TODO: try to use __constant__ memory for config
   Grid grid(-10., +10., 0, 2 * M_PI, r, size);
   cudaCheck(cudaMalloc(&grid.jets, sizeof(ParticleIndexType) * grid.max_i * grid.max_j * grid.n));
+  cudaCheck(cudaMemset(grid.jets, 0xff, sizeof(ParticleIndexType) * grid.max_i * grid.max_j * grid.n));
 
   EtaPhi *d_points_ptr;
   cudaCheck(cudaMalloc(&d_points_ptr, sizeof(EtaPhi) * size));
