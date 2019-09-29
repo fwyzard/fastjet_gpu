@@ -183,8 +183,8 @@ __device__ Dist minimum_in_cell(Grid const &grid,
                                 const GridIndexType j,
                                 double one_over_r2) {
   int k = 0;
-  int offset = grid.offset(i, j);
-  ParticleIndexType num = grid.jets[offset + k];
+  int index = grid.index(i, j);
+  ParticleIndexType num = grid.jets[index * grid.n + k];
 
   Dist temp;
   while (num >= 0) {
@@ -196,7 +196,7 @@ __device__ Dist minimum_in_cell(Grid const &grid,
     }
 
     k++;
-    num = grid.jets[offset + k];
+    num = grid.jets[index * grid.n + k];
   }
 
   return min;
@@ -204,10 +204,10 @@ __device__ Dist minimum_in_cell(Grid const &grid,
 
 __device__ void remove_from_grid(Grid const &grid, ParticleIndexType jet, const EtaPhi &p) {
   // Remove an element from a grid cell, and shift all following elements to fill the gap
-  int offset = grid.offset(p.box_i, p.box_j);
+  int index = grid.index(p.box_i, p.box_j);
   int first, last;
   for (int k = 0; k < grid.n; ++k) {
-    ParticleIndexType num = grid.jets[offset + k];
+    ParticleIndexType num = grid.jets[index * grid.n + k];
     if (num == jet) {
       first = k;
     } else if (num == -1) {
@@ -218,18 +218,18 @@ __device__ void remove_from_grid(Grid const &grid, ParticleIndexType jet, const 
     // FIXME handle the case where the cell is full
   }
   if (first != last - 1) {
-    grid.jets[offset + first] = grid.jets[offset + last - 1];
+    grid.jets[index * grid.n + first] = grid.jets[index * grid.n + last - 1];
   }
   // set the last entry to invalid
-  grid.jets[offset + last - 1] = -1;
+  grid.jets[index * grid.n + last - 1] = -1;
 }
 
 __device__ void add_to_grid(Grid const &grid, ParticleIndexType jet, const EtaPhi &p) {
   // Add a jet as the last element of a grid cell
-  int offset = grid.offset(p.box_i, p.box_j);
+  int index = grid.index(p.box_i, p.box_j);
   for (int k = 0; k < grid.n; ++k) {
     // if the k-th element is -1, replace it with the jet id
-    if (atomicCAS(& grid.jets[offset + k], -1, jet) == -1) {
+    if (atomicCAS(& grid.jets[index * grid.n + k], -1, jet) == -1) {
       break;
     }
     // FIXME handle the case where the cell is full
@@ -240,11 +240,11 @@ __device__ ParticleIndexType &jet_in_grid(Grid const &grid,
                                           ParticleIndexType jet,
                                           const EtaPhi &p) {
   // Return a reference to the element that identifies a jet in a grid cell
-  int offset = grid.offset(p.box_i, p.box_j);
+  int index = grid.index(p.box_i, p.box_j);
   for (int k = 0; k < grid.n; ++k) {
-    ParticleIndexType num = grid.jets[offset + k];
+    ParticleIndexType num = grid.jets[index * grid.n + k];
     if (num == jet) {
-      return grid.jets[offset + k];
+      return grid.jets[index * grid.n + k];
     }
   }
   // handle the case where the jet is not found
