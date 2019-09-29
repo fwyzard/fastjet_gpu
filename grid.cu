@@ -228,9 +228,8 @@ __device__ void add_to_grid(Grid const &grid, ParticleIndexType jet, const EtaPh
   // Add a jet as the last element of a grid cell
   int offset = grid.offset(p.box_i, p.box_j);
   for (int k = 0; k < grid.n; ++k) {
-    ParticleIndexType num = grid.jets[offset + k];
-    if (num == -1) {
-      grid.jets[offset + k] = jet;
+    // if the k-th element is -1, replace it with the jet id
+    if (atomicCAS(& grid.jets[offset + k], -1, jet) == -1) {
       break;
     }
     // FIXME handle the case where the cell is full
