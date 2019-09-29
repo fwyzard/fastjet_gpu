@@ -175,7 +175,6 @@ __device__ Dist yij_distance(const EtaPhi *points, ParticleIndexType i, Particle
 __device__ Dist minimum_in_cell(Grid const &config,
                                 const ParticleIndexType *grid,
                                 const EtaPhi *points,
-                                const PseudoJet *jets,
                                 Dist min,
                                 const ParticleIndexType tid,  // jet index
                                 const GridIndexType i,        // cell coordinates
@@ -268,7 +267,7 @@ __global__ void set_points(Grid config, PseudoJet *jets, EtaPhi *points, const P
 }
 
 __global__ void set_grid(
-    Grid config, ParticleIndexType *grid, const EtaPhi *points, const PseudoJet *jets, const ParticleIndexType n) {
+    Grid config, ParticleIndexType *grid, const EtaPhi *points, const ParticleIndexType n) {
   GridIndexType tid = threadIdx.x;
   GridIndexType bid = blockIdx.x;
 
@@ -317,7 +316,7 @@ __global__ void reduce_recombine(Grid config,
       if (local_min.i == -3 or local_min.j == min.i or local_min.j == min.j or local_min.i == min.i or
           local_min.i == min.j or local_min.i >= n or local_min.j >= n) {
         min = yij_distance(points, tid, tid, one_over_r2);
-        min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i, p.box_j, one_over_r2);
+        min = minimum_in_cell(config, grid, points, min, tid, p.box_i, p.box_j, one_over_r2);
 
         bool right = p.box_i + 1 < config.max_i;
         bool left = p.box_i > 0;
@@ -353,12 +352,12 @@ __global__ void reduce_recombine(Grid config,
 
         // Right
         if (right) {
-          min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i + 1, p.box_j, one_over_r2);
+          min = minimum_in_cell(config, grid, points, min, tid, p.box_i + 1, p.box_j, one_over_r2);
         }
 
         // Left
         if (left) {
-          min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i - 1, p.box_j, one_over_r2);
+          min = minimum_in_cell(config, grid, points, min, tid, p.box_i - 1, p.box_j, one_over_r2);
         }
 
         // check if (p.box_j + 1) would overflow config.max_j
@@ -366,30 +365,30 @@ __global__ void reduce_recombine(Grid config,
 
         // Up
         if (up) {
-          min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i, j, one_over_r2);
+          min = minimum_in_cell(config, grid, points, min, tid, p.box_i, j, one_over_r2);
 
           // Up Right
           if (right) {
-            min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i + 1, j, one_over_r2);
+            min = minimum_in_cell(config, grid, points, min, tid, p.box_i + 1, j, one_over_r2);
           }
 
           // Up Left
           if (left) {
-            min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i - 1, j, one_over_r2);
+            min = minimum_in_cell(config, grid, points, min, tid, p.box_i - 1, j, one_over_r2);
           }
 
           if (p.box_j == config.max_j - 2) {
             // Up Up
-            min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i, 0, one_over_r2);
+            min = minimum_in_cell(config, grid, points, min, tid, p.box_i, 0, one_over_r2);
 
             // Up Up Right
             if (right) {
-              min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i + 1, 0, one_over_r2);
+              min = minimum_in_cell(config, grid, points, min, tid, p.box_i + 1, 0, one_over_r2);
             }
 
             // Up Up Left
             if (left) {
-              min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i - 1, 0, one_over_r2);
+              min = minimum_in_cell(config, grid, points, min, tid, p.box_i - 1, 0, one_over_r2);
             }
           }
         }
@@ -399,30 +398,30 @@ __global__ void reduce_recombine(Grid config,
 
         // Down
         if (down) {
-          min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i, j, one_over_r2);
+          min = minimum_in_cell(config, grid, points, min, tid, p.box_i, j, one_over_r2);
 
           // Down Right
           if (right) {
-            min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i + 1, j, one_over_r2);
+            min = minimum_in_cell(config, grid, points, min, tid, p.box_i + 1, j, one_over_r2);
           }
 
           // Down Left
           if (left) {
-            min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i - 1, j, one_over_r2);
+            min = minimum_in_cell(config, grid, points, min, tid, p.box_i - 1, j, one_over_r2);
           }
 
           if (p.box_j == 0) {
             // Down Down
-            min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i, j - 1, one_over_r2);
+            min = minimum_in_cell(config, grid, points, min, tid, p.box_i, j - 1, one_over_r2);
 
             // Down Down Right
             if (right) {
-              min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i + 1, j - 1, one_over_r2);
+              min = minimum_in_cell(config, grid, points, min, tid, p.box_i + 1, j - 1, one_over_r2);
             }
 
             // Down Down Left
             if (left) {
-              min = minimum_in_cell(config, grid, points, jets, min, tid, p.box_i - 1, j - 1, one_over_r2);
+              min = minimum_in_cell(config, grid, points, min, tid, p.box_i - 1, j - 1, one_over_r2);
             }
           }
         }
@@ -540,7 +539,7 @@ void cluster(PseudoJet *particles, int size, Scheme scheme, double r) {
   cudaCheck(cudaDeviceSynchronize());
 
   // create grid
-  set_grid<<<config.max_i, config.max_j>>>(config, d_grid_ptr, d_points_ptr, particles, size);
+  set_grid<<<config.max_i, config.max_j>>>(config, d_grid_ptr, d_points_ptr, size);
   cudaCheck(cudaDeviceSynchronize());
 
   // compute dist_min
