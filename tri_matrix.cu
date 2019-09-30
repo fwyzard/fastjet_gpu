@@ -184,12 +184,12 @@ __global__ void reduction_min(PseudoJetExt *jets,
     } else {
       dst.d = yij_distance(jets[dst.i], jets[dst.j], scheme, one_over_r2);
     }
-    
+
     distances[tid] = dst;
   } else {
     if (tid >= distances_array_size || dst.j >= num_particles || dst.i >= num_particles) {
       dst.d = MAX_DOUBLE;
-    } 
+    }
   }
 
   // printf("%4d%4d%4d%4d%20.8e\n", blockIdx.x, num_particles, dst.i, dst.j, dst.d);
@@ -216,6 +216,12 @@ __global__ void reduction_blocks(
     dst.d = MAX_DOUBLE;
   } else {
     dst = distances_out[tid];
+    for (int i = tid + blockDim.x; i < distances_array_size; i += blockDim.x) {
+      Dist temp = distances_out[i];
+      if (temp.d < dst.d) {
+        dst = temp;
+      }
+    }
   }
 
   Dist min = BlockReduceT(sdata).Reduce(dst, dist_compare());
@@ -226,7 +232,7 @@ __global__ void reduction_blocks(
     i = min.i;
     j = min.j;
 
-    // printf("%4d%4d%4d%20.8e\n", num_particles, i, j, min.d);
+    //printf("%6d%6d%6d%20.8e\n", num_particles, i, j, min.d);
 
     // int f, e;
     // tid_to_ij(f, e, 58101);
@@ -291,6 +297,7 @@ void cluster(PseudoJet *particles, int size, Scheme scheme, double r) {
 
   Dist *d_min = 0;
   cudaCheck(cudaMalloc((void **)&d_min, sizeof(Dist)));
+
 #pragma endregoin
 
   int num_threads = size;
