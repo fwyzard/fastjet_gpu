@@ -308,7 +308,7 @@ __global__ void reduce_recombine(Grid grid,
         }
 
         // check if (p.box_j + 1) would overflow grid.max_j
-        GridIndexType j = (p.box_j < grid.max_j) ? p.box_j + 1 : 0;
+        GridIndexType j = (p.box_j + 1 < grid.max_j) ? p.box_j + 1 : 0;
 
         // Up
         min = minimum_in_cell(grid, points, min, tid, p.box_i, j, one_over_r2);
