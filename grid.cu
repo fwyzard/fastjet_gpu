@@ -296,35 +296,6 @@ __global__ void reduce_recombine(Grid grid,
 
         bool right = p.box_i + 1 < grid.max_i;
         bool left = p.box_i > 0;
-        bool up = true;
-        bool down = true;
-
-        /*
-        EtaPhi bp;
-        bp.eta = grid.eta_max(p.box_i);
-        bp.phi = p.phi;
-        if (right and min.distance < plain_distance(p, bp)) {
-          right = false;
-        }
-
-        bp.eta = grid.eta_min(p.box_i);
-        bp.phi = p.phi;
-        if (left and min.distance < plain_distance(p, bp)) {
-          left = false;
-        }
-
-        bp.eta = p.eta;
-        bp.phi = p.box_j + 1 <= grid.max_j ? (p.box_j + 1) * r : 0;
-        if (min.distance < plain_distance(p, bp)) {
-          up = false;
-        }
-
-        bp.eta = p.eta;
-        bp.phi = p.box_j - 1 >= 0 ? p.box_j * r : (grid.max_j - 1) * r;
-        if (min.distance < plain_distance(p, bp) and p.box_j - 1 >= 0) {
-          down = false;
-        }
-        */
 
         // Right
         if (right) {
@@ -340,32 +311,30 @@ __global__ void reduce_recombine(Grid grid,
         GridIndexType j = (p.box_j < grid.max_j) ? p.box_j + 1 : 0;
 
         // Up
-        if (up) {
-          min = minimum_in_cell(grid, points, min, tid, p.box_i, j, one_over_r2);
+        min = minimum_in_cell(grid, points, min, tid, p.box_i, j, one_over_r2);
 
-          // Up Right
+        // Up Right
+        if (right) {
+          min = minimum_in_cell(grid, points, min, tid, p.box_i + 1, j, one_over_r2);
+        }
+
+        // Up Left
+        if (left) {
+          min = minimum_in_cell(grid, points, min, tid, p.box_i - 1, j, one_over_r2);
+        }
+
+        if (p.box_j == grid.max_j - 2) {
+          // Up Up
+          min = minimum_in_cell(grid, points, min, tid, p.box_i, 0, one_over_r2);
+
+          // Up Up Right
           if (right) {
-            min = minimum_in_cell(grid, points, min, tid, p.box_i + 1, j, one_over_r2);
+            min = minimum_in_cell(grid, points, min, tid, p.box_i + 1, 0, one_over_r2);
           }
 
-          // Up Left
+          // Up Up Left
           if (left) {
-            min = minimum_in_cell(grid, points, min, tid, p.box_i - 1, j, one_over_r2);
-          }
-
-          if (p.box_j == grid.max_j - 2) {
-            // Up Up
-            min = minimum_in_cell(grid, points, min, tid, p.box_i, 0, one_over_r2);
-
-            // Up Up Right
-            if (right) {
-              min = minimum_in_cell(grid, points, min, tid, p.box_i + 1, 0, one_over_r2);
-            }
-
-            // Up Up Left
-            if (left) {
-              min = minimum_in_cell(grid, points, min, tid, p.box_i - 1, 0, one_over_r2);
-            }
+            min = minimum_in_cell(grid, points, min, tid, p.box_i - 1, 0, one_over_r2);
           }
         }
 
@@ -373,32 +342,30 @@ __global__ void reduce_recombine(Grid grid,
         j = p.box_j - 1 >= 0 ? p.box_j - 1 : grid.max_j - 1;
 
         // Down
-        if (down) {
-          min = minimum_in_cell(grid, points, min, tid, p.box_i, j, one_over_r2);
+        min = minimum_in_cell(grid, points, min, tid, p.box_i, j, one_over_r2);
 
-          // Down Right
+        // Down Right
+        if (right) {
+          min = minimum_in_cell(grid, points, min, tid, p.box_i + 1, j, one_over_r2);
+        }
+
+        // Down Left
+        if (left) {
+          min = minimum_in_cell(grid, points, min, tid, p.box_i - 1, j, one_over_r2);
+        }
+
+        if (p.box_j == 0) {
+          // Down Down
+          min = minimum_in_cell(grid, points, min, tid, p.box_i, j - 1, one_over_r2);
+
+          // Down Down Right
           if (right) {
-            min = minimum_in_cell(grid, points, min, tid, p.box_i + 1, j, one_over_r2);
+            min = minimum_in_cell(grid, points, min, tid, p.box_i + 1, j - 1, one_over_r2);
           }
 
-          // Down Left
+          // Down Down Left
           if (left) {
-            min = minimum_in_cell(grid, points, min, tid, p.box_i - 1, j, one_over_r2);
-          }
-
-          if (p.box_j == 0) {
-            // Down Down
-            min = minimum_in_cell(grid, points, min, tid, p.box_i, j - 1, one_over_r2);
-
-            // Down Down Right
-            if (right) {
-              min = minimum_in_cell(grid, points, min, tid, p.box_i + 1, j - 1, one_over_r2);
-            }
-
-            // Down Down Left
-            if (left) {
-              min = minimum_in_cell(grid, points, min, tid, p.box_i - 1, j - 1, one_over_r2);
-            }
+            min = minimum_in_cell(grid, points, min, tid, p.box_i - 1, j - 1, one_over_r2);
           }
         }
 
@@ -409,7 +376,6 @@ __global__ void reduce_recombine(Grid grid,
         min_dists[tid] = min;
       }
 
-      // FIXME: why an extra copy ?
       sdata[tid] = min_dists[tid];
     }
     __syncthreads();
@@ -425,11 +391,6 @@ __global__ void reduce_recombine(Grid grid,
       }
       __syncthreads();
     }
-
-    // Minimum of the row
-    // if (tid == 0) {
-    // min_dists[k] = sdata[0];
-    // }
 
     min = sdata[0];
     if (threadIdx.x == 0) {
