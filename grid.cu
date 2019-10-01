@@ -47,7 +47,7 @@ struct Grid {
   const GridIndexType max_j;
   const ParticleIndexType n;
 
-  ParticleIndexType * jets;
+  ParticleIndexType *jets;
 
   // TODO use a smaller grid size (esimate from distributions in data/mc)
   // TODO usa a SoA
@@ -229,16 +229,14 @@ __device__ void add_to_grid(Grid const &grid, ParticleIndexType jet, const EtaPh
   int index = grid.index(p.box_i, p.box_j);
   for (int k = 0; k < grid.n; ++k) {
     // if the k-th element is -1, replace it with the jet id
-    if (atomicCAS(& grid.jets[index * grid.n + k], -1, jet) == -1) {
+    if (atomicCAS(&grid.jets[index * grid.n + k], -1, jet) == -1) {
       break;
     }
     // FIXME handle the case where the cell is full
   }
 }
 
-__device__ ParticleIndexType &jet_in_grid(Grid const &grid,
-                                          ParticleIndexType jet,
-                                          const EtaPhi &p) {
+__device__ ParticleIndexType &jet_in_grid(Grid const &grid, ParticleIndexType jet, const EtaPhi &p) {
   // Return a reference to the element that identifies a jet in a grid cell
   int index = grid.index(p.box_i, p.box_j);
   for (int k = 0; k < grid.n; ++k) {
@@ -267,13 +265,8 @@ __global__ void set_points(Grid grid, PseudoJet *jets, EtaPhi *points, const Par
   }
 }
 
-__global__ void reduce_recombine(Grid grid,
-                                 EtaPhi *points,
-                                 PseudoJet *jets,
-                                 Dist *min_dists,
-                                 ParticleIndexType n,
-                                 Scheme scheme,
-                                 const float r) {
+__global__ void reduce_recombine(
+    Grid grid, EtaPhi *points, PseudoJet *jets, Dist *min_dists, ParticleIndexType n, Scheme scheme, const float r) {
   extern __shared__ Dist sdata[];
 
   const double one_over_r2 = 1. / (r * r);
@@ -291,50 +284,50 @@ __global__ void reduce_recombine(Grid grid,
       Dist local_min = min_dists[tid];
       if (local_min.i == -3 or local_min.j == min.i or local_min.j == min.j or local_min.i == min.i or
           local_min.i == min.j or local_min.i >= n or local_min.j >= n) {
-        min = yij_distance(points, tid, tid, one_over_r2);
-        min = minimum_in_cell(grid, points, min, tid, p.box_i, p.box_j, one_over_r2);
+        local_min = yij_distance(points, tid, tid, one_over_r2);
+        local_min = minimum_in_cell(grid, points, local_min, tid, p.box_i, p.box_j, one_over_r2);
 
         bool right = p.box_i + 1 < grid.max_i;
         bool left = p.box_i > 0;
 
         // Right
         if (right) {
-          min = minimum_in_cell(grid, points, min, tid, p.box_i + 1, p.box_j, one_over_r2);
+          local_min = minimum_in_cell(grid, points, local_min, tid, p.box_i + 1, p.box_j, one_over_r2);
         }
 
         // Left
         if (left) {
-          min = minimum_in_cell(grid, points, min, tid, p.box_i - 1, p.box_j, one_over_r2);
+          local_min = minimum_in_cell(grid, points, local_min, tid, p.box_i - 1, p.box_j, one_over_r2);
         }
 
         // check if (p.box_j + 1) would overflow grid.max_j
         GridIndexType j = (p.box_j + 1 < grid.max_j) ? p.box_j + 1 : 0;
 
         // Up
-        min = minimum_in_cell(grid, points, min, tid, p.box_i, j, one_over_r2);
+        local_min = minimum_in_cell(grid, points, local_min, tid, p.box_i, j, one_over_r2);
 
         // Up Right
         if (right) {
-          min = minimum_in_cell(grid, points, min, tid, p.box_i + 1, j, one_over_r2);
+          local_min = minimum_in_cell(grid, points, local_min, tid, p.box_i + 1, j, one_over_r2);
         }
 
         // Up Left
         if (left) {
-          min = minimum_in_cell(grid, points, min, tid, p.box_i - 1, j, one_over_r2);
+          local_min = minimum_in_cell(grid, points, local_min, tid, p.box_i - 1, j, one_over_r2);
         }
 
         if (p.box_j == grid.max_j - 2) {
           // Up Up
-          min = minimum_in_cell(grid, points, min, tid, p.box_i, 0, one_over_r2);
+          local_min = minimum_in_cell(grid, points, local_min, tid, p.box_i, 0, one_over_r2);
 
           // Up Up Right
           if (right) {
-            min = minimum_in_cell(grid, points, min, tid, p.box_i + 1, 0, one_over_r2);
+            local_min = minimum_in_cell(grid, points, local_min, tid, p.box_i + 1, 0, one_over_r2);
           }
 
           // Up Up Left
           if (left) {
-            min = minimum_in_cell(grid, points, min, tid, p.box_i - 1, 0, one_over_r2);
+            local_min = minimum_in_cell(grid, points, local_min, tid, p.box_i - 1, 0, one_over_r2);
           }
         }
 
@@ -342,38 +335,38 @@ __global__ void reduce_recombine(Grid grid,
         j = p.box_j - 1 >= 0 ? p.box_j - 1 : grid.max_j - 1;
 
         // Down
-        min = minimum_in_cell(grid, points, min, tid, p.box_i, j, one_over_r2);
+        local_min = minimum_in_cell(grid, points, local_min, tid, p.box_i, j, one_over_r2);
 
         // Down Right
         if (right) {
-          min = minimum_in_cell(grid, points, min, tid, p.box_i + 1, j, one_over_r2);
+          local_min = minimum_in_cell(grid, points, local_min, tid, p.box_i + 1, j, one_over_r2);
         }
 
         // Down Left
         if (left) {
-          min = minimum_in_cell(grid, points, min, tid, p.box_i - 1, j, one_over_r2);
+          local_min = minimum_in_cell(grid, points, local_min, tid, p.box_i - 1, j, one_over_r2);
         }
 
         if (p.box_j == 0) {
           // Down Down
-          min = minimum_in_cell(grid, points, min, tid, p.box_i, j - 1, one_over_r2);
+          local_min = minimum_in_cell(grid, points, local_min, tid, p.box_i, j - 1, one_over_r2);
 
           // Down Down Right
           if (right) {
-            min = minimum_in_cell(grid, points, min, tid, p.box_i + 1, j - 1, one_over_r2);
+            local_min = minimum_in_cell(grid, points, local_min, tid, p.box_i + 1, j - 1, one_over_r2);
           }
 
           // Down Down Left
           if (left) {
-            min = minimum_in_cell(grid, points, min, tid, p.box_i - 1, j - 1, one_over_r2);
+            local_min = minimum_in_cell(grid, points, local_min, tid, p.box_i - 1, j - 1, one_over_r2);
           }
         }
 
-        if (min.i > min.j) {
-          ::swap(min.i, min.j);
+        if (local_min.i > local_min.j) {
+          ::swap(local_min.i, local_min.j);
         }
 
-        min_dists[tid] = min;
+        min_dists[tid] = local_min;
       }
 
       sdata[tid] = min_dists[tid];
@@ -473,7 +466,6 @@ void cluster(PseudoJet *particles, int size, Scheme scheme, double r) {
   // set jets into points
   set_points<<<gridSize, blockSize>>>(grid, particles, d_points_ptr, size, scheme);
   cudaCheck(cudaDeviceSynchronize());
-
 
   {
     cudaFuncAttributes attr;
