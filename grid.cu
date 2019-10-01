@@ -362,14 +362,10 @@ __global__ void reduce_recombine(
           }
         }
 
-        if (local_min.i > local_min.j) {
-          ::swap(local_min.i, local_min.j);
-        }
-
         min_dists[tid] = local_min;
       }
 
-      sdata[tid] = min_dists[tid];
+      sdata[tid] = local_min; 
     }
     __syncthreads();
 
