@@ -24,7 +24,7 @@ using GridIndexType = int;
 using ParticleIndexType = int;
 
 struct EtaPhi {
-  double eta;
+  double rap;
   double phi;
   double diB;
   GridIndexType box_i;
@@ -38,8 +38,8 @@ struct Dist {
 };
 
 struct Grid {
-  const double min_eta;
-  const double max_eta;
+  const double min_rap;
+  const double max_rap;
   const double min_phi;
   const double max_phi;
   const double r;
@@ -51,28 +51,28 @@ struct Grid {
 
   // TODO use a smaller grid size (esimate from distributions in data/mc)
   // TODO usa a SoA
-  __host__ Grid(double min_eta, double max_eta, double min_phi, double max_phi, double r, ParticleIndexType n)
-      : min_eta(min_eta),
-        max_eta(max_eta),
+  __host__ Grid(double min_rap, double max_rap, double min_phi, double max_phi, double r, ParticleIndexType n)
+      : min_rap(min_rap),
+        max_rap(max_rap),
         min_phi(min_phi),
         max_phi(min_phi),
         r((2 * M_PI) / (int)((2 * M_PI) / r)),            // round up the grid size to have an integer number of cells in phi
-        max_i((GridIndexType)(((max_eta - min_eta) / r))),
+        max_i((GridIndexType)(((max_rap - min_rap) / r))),
         max_j((GridIndexType)(((max_phi - min_phi) / r))),
         n(n),
         jets(nullptr) {}
 
-  __host__ __device__ constexpr inline GridIndexType i(double eta) const {
-    return (GridIndexType)((eta - min_eta) / r);
+  __host__ __device__ constexpr inline GridIndexType i(double rap) const {
+    return (GridIndexType)((rap - min_rap) / r);
   }
 
   __host__ __device__ constexpr inline GridIndexType j(double phi) const {
     return (GridIndexType)((phi - min_phi) / r);
   }
 
-  __host__ __device__ constexpr inline double eta_min(GridIndexType i) const { return min_eta + r * i; }
+  __host__ __device__ constexpr inline double rap_min(GridIndexType i) const { return min_rap + r * i; }
 
-  __host__ __device__ constexpr inline double eta_max(GridIndexType i) const { return min_eta + r * (i + 1); }
+  __host__ __device__ constexpr inline double rap_max(GridIndexType i) const { return min_rap + r * (i + 1); }
 
   __host__ __device__ constexpr inline double phi_min(GridIndexType j) const { return min_phi + r * j; }
 
@@ -113,9 +113,9 @@ __host__ __device__ EtaPhi _set_jet(PseudoJet &jet, Scheme scheme) {
     // them) [this can be relevant at parton-level]
     double MaxRapHere = MaxRap + std::abs(jet.pz);
     if (jet.pz >= 0.0) {
-      point.eta = MaxRapHere;
+      point.rap = MaxRapHere;
     } else {
-      point.eta = -MaxRapHere;
+      point.rap = -MaxRapHere;
     }
   } else {
     // get the rapidity in a way that's modestly insensitive to roundoff
@@ -124,9 +124,9 @@ __host__ __device__ EtaPhi _set_jet(PseudoJet &jet, Scheme scheme) {
     double effective_m2 = ::max(0.0, (jet.E + jet.pz) * (jet.E - jet.pz) - pt2);  // force non tachyonic mass
     double E_plus_pz = jet.E + std::abs(jet.pz);                                  // the safer of p+, p-
     // p+/p- = (p+ p-) / (p-)^2 = (kt^2+m^2)/(p-)^2
-    point.eta = 0.5 * std::log((pt2 + effective_m2) / (E_plus_pz * E_plus_pz));
+    point.rap = 0.5 * std::log((pt2 + effective_m2) / (E_plus_pz * E_plus_pz));
     if (jet.pz > 0) {
-      point.eta = -point.eta;
+      point.rap = -point.rap;
     }
   }
 
@@ -153,7 +153,7 @@ __device__ double plain_distance(const EtaPhi &p1, const EtaPhi &p2) {
   if (dphi > M_PI) {
     dphi = (2 * M_PI) - dphi;
   }
-  double drap = p1.eta - p2.eta;
+  double drap = p1.rap - p2.rap;
   return (dphi * dphi + drap * drap);
 }
 
@@ -257,10 +257,10 @@ __global__ void set_points(Grid grid, PseudoJet *jets, EtaPhi *points, const Par
 
   for (int tid = start; tid < n; tid += stride) {
     EtaPhi p = _set_jet(jets[tid], scheme);
-    p.box_i = grid.i(p.eta);
+    p.box_i = grid.i(p.rap);
     p.box_j = grid.j(p.phi);
     points[tid] = p;
-    //printf("particle %3d has (eta,phi,pT) = (%f,%f,%f) and cell (i,j) = (%d,%d)\n", tid, p.eta, p.phi, sqrt(p.diB), p.box_i, p.box_j);
+    //printf("particle %3d has (rap,phi,pT) = (%f,%f,%f) and cell (i,j) = (%d,%d)\n", tid, p.rap, p.phi, sqrt(p.diB), p.box_i, p.box_j);
     add_to_grid(grid, tid, p);
   }
 }
@@ -418,7 +418,7 @@ __global__ void reduce_recombine(
         jet.E = jets[min.i].E + jets[min.j].E;
 
         EtaPhi point = _set_jet(jet, scheme);
-        point.box_i = grid.i(point.eta);
+        point.box_i = grid.i(point.rap);
         point.box_j = grid.j(point.phi);
 
         jets[min.i] = jet;
@@ -441,8 +441,8 @@ __global__ void reduce_recombine(
 
 void cluster(PseudoJet *particles, int size, Scheme scheme, double r) {
 #pragma region vectors
-  // examples from FastJet span |eta| < 10
-  // TODO: make the eta range dynamic, based on the data themselves
+  // examples from FastJet span |rap| < 10
+  // TODO: make the rap range dynamic, based on the data themselves
   // TODO: make the cell size dynamic, based on the data themselves
   // TODO: try to use __constant__ memory for config
   Grid grid(-10., +10., 0, 2 * M_PI, r, size);
