@@ -87,7 +87,7 @@ struct Grid {
 #pragma region device_functions
 __host__ __device__ constexpr inline double safe_inverse(double x) { return (x > 1e-300) ? (1.0 / x) : 1e300; }
 
-__host__ __device__ EtaPhi _set_jet(PseudoJet &jet, Scheme scheme) {
+__host__ __device__ EtaPhi _set_jet(PseudoJet &jet, Algorithm algo) {
   EtaPhi point;
 
   auto pt2 = jet.px * jet.px + jet.py * jet.py;
@@ -131,16 +131,16 @@ __host__ __device__ EtaPhi _set_jet(PseudoJet &jet, Scheme scheme) {
   }
 
   // set the "weight" used depending on the jet algorithm
-  switch (scheme) {
-    case Scheme::Kt:
+  switch (algo) {
+    case Algorithm::Kt:
       point.diB = pt2;
       break;
 
-    case Scheme::CambridgeAachen:
+    case Algorithm::CambridgeAachen:
       point.diB = 1.;
       break;
 
-    case Scheme::AntiKt:
+    case Algorithm::AntiKt:
       point.diB = safe_inverse(pt2);
       break;
   }
@@ -251,12 +251,12 @@ __device__ ParticleIndexType &jet_in_grid(Grid const &grid, ParticleIndexType je
 #pragma endregion
 
 #pragma region kernels
-__global__ void set_points(Grid grid, PseudoJet *jets, EtaPhi *points, const ParticleIndexType n, Scheme scheme) {
+__global__ void set_points(Grid grid, PseudoJet *jets, EtaPhi *points, const ParticleIndexType n, Algorithm algo) {
   int start = threadIdx.x + blockIdx.x * blockDim.x;
   int stride = gridDim.x * blockDim.x;
 
   for (int tid = start; tid < n; tid += stride) {
-    EtaPhi p = _set_jet(jets[tid], scheme);
+    EtaPhi p = _set_jet(jets[tid], algo);
     p.box_i = grid.i(p.rap);
     p.box_j = grid.j(p.phi);
     points[tid] = p;
@@ -266,7 +266,7 @@ __global__ void set_points(Grid grid, PseudoJet *jets, EtaPhi *points, const Par
 }
 
 __global__ void reduce_recombine(
-    Grid grid, EtaPhi *points, PseudoJet *jets, Dist *min_dists, ParticleIndexType n, Scheme scheme, const float r) {
+    Grid grid, EtaPhi *points, PseudoJet *jets, Dist *min_dists, ParticleIndexType n, Algorithm algo, const float r) {
   extern __shared__ Dist sdata[];
 
   const double one_over_r2 = 1. / (r * r);
@@ -417,7 +417,7 @@ __global__ void reduce_recombine(
         jet.pz = jets[min.i].pz + jets[min.j].pz;
         jet.E = jets[min.i].E + jets[min.j].E;
 
-        EtaPhi point = _set_jet(jet, scheme);
+        EtaPhi point = _set_jet(jet, algo);
         point.box_i = grid.i(point.rap);
         point.box_j = grid.j(point.phi);
 
@@ -439,7 +439,7 @@ __global__ void reduce_recombine(
 }
 #pragma endregion
 
-void cluster(PseudoJet *particles, int size, Scheme scheme, double r) {
+void cluster(PseudoJet *particles, int size, Algorithm algo, double r) {
 #pragma region vectors
   // examples from FastJet span |rap| < 10
   // TODO: make the rap range dynamic, based on the data themselves
@@ -464,7 +464,7 @@ void cluster(PseudoJet *particles, int size, Scheme scheme, double r) {
   cudaCheck(cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, set_points, 0, 0));
   int gridSize = std::min((size + blockSize - 1) / blockSize, minGridSize);
   // set jets into points
-  set_points<<<gridSize, blockSize>>>(grid, particles, d_points_ptr, size, scheme);
+  set_points<<<gridSize, blockSize>>>(grid, particles, d_points_ptr, size, algo);
   cudaCheck(cudaDeviceSynchronize());
 
   {
@@ -488,7 +488,7 @@ void cluster(PseudoJet *particles, int size, Scheme scheme, double r) {
     int sharedMemory = sizeof(Dist) * size;
 
     reduce_recombine<<<gridSize, blockSize, sharedMemory>>>(
-        grid, d_points_ptr, particles, d_min_dists_ptr, size, scheme, r);
+        grid, d_points_ptr, particles, d_min_dists_ptr, size, algo, r);
     cudaCheck(cudaGetLastError());
   }
 #pragma endregion

@@ -83,18 +83,18 @@ __device__ double plain_distance(PseudoJetExt &jet1, PseudoJetExt &jet2) {
   return (dphi * dphi + drap * drap);
 }
 
-__device__ double yij_distance(PseudoJetExt &jet1, PseudoJetExt &jet2, Scheme scheme, double one_over_r2) {
-  switch (scheme) {
-    case Scheme::Kt:
+__device__ double yij_distance(PseudoJetExt &jet1, PseudoJetExt &jet2, Algorithm algo, double one_over_r2) {
+  switch (algo) {
+    case Algorithm::Kt:
       return min(jet1.diB, jet2.diB) * plain_distance(jet1, jet2) * one_over_r2;
       break;
 
-    case Scheme::CambridgeAachen:
+    case Algorithm::CambridgeAachen:
       return plain_distance(jet1, jet2) * one_over_r2;
       break;
 
     // TODO: store 1/diB instead of diB
-    case Scheme::AntiKt:
+    case Algorithm::AntiKt:
       return min(jet1.inv_diB, jet2.inv_diB) * plain_distance(jet1, jet2) * one_over_r2;
       break;
   }
@@ -126,7 +126,7 @@ struct dist_compare {
   __host__ __device__ Dist operator()(Dist &first, Dist &second) { return first.d < second.d ? first : second; }
 };
 
-__global__ void fastjet(PseudoJetExt *jets, int n, const Scheme scheme, const float one_over_r2) {
+__global__ void fastjet(PseudoJetExt *jets, int n, const Algorithm algo, const float one_over_r2) {
   // Specialize BlockReduce type for our thread block
   typedef BlockReduce<Dist, 1024> BlockReduceT;
   // Shared memory
@@ -147,19 +147,19 @@ __global__ void fastjet(PseudoJetExt *jets, int n, const Scheme scheme, const fl
       tid_to_ij(dst.i, dst.j, tid);
 
       if (dst.i == dst.j) {
-        switch (scheme) {
-          case Scheme::Kt:
+        switch (algo) {
+          case Algorithm::Kt:
             dst.d = jets[dst.i].diB;
             break;
-          case Scheme::CambridgeAachen:
+          case Algorithm::CambridgeAachen:
             dst.d = 1.;
             break;
-          case Scheme::AntiKt:
+          case Algorithm::AntiKt:
             dst.d = jets[dst.i].inv_diB;
             break;
         }
       } else {
-        dst.d = yij_distance(jets[dst.i], jets[dst.j], scheme, one_over_r2);
+        dst.d = yij_distance(jets[dst.i], jets[dst.j], algo, one_over_r2);
       }
 
       if (dst.d < local_min.d)
@@ -226,7 +226,7 @@ __global__ void output(const PseudoJetExt *jets, PseudoJet *particles, int size)
   }
 }
 
-void cluster(PseudoJet *particles, int size, Scheme scheme, double r) {
+void cluster(PseudoJet *particles, int size, Algorithm algo, double r) {
 #pragma regoin CudaMalloc
   PseudoJetExt *d_jets;
   cudaCheck(cudaMalloc(&d_jets, size * sizeof(PseudoJetExt)));
@@ -235,7 +235,7 @@ void cluster(PseudoJet *particles, int size, Scheme scheme, double r) {
 
   double one_over_r2 = 1. / (r * r);
 
-  fastjet<<<1, 1024>>>(d_jets, size, scheme, one_over_r2);
+  fastjet<<<1, 1024>>>(d_jets, size, algo, one_over_r2);
 
   output<<<8, 512>>>(d_jets, particles, size);
 

@@ -116,9 +116,9 @@ void print_jets(std::vector<PseudoJet> const& jets, bool cartesian = false) {
 }
 
 int main(int argc, const char* argv[]) {
-  double ptmin = 0.0;          // GeV
-  double r = 1.0;              // clustering radius
-  Scheme scheme = Scheme::Kt;  // recombination scheme
+  double ptmin = 0.0;              // GeV
+  double r = 1.0;                  // clustering radius
+  Algorithm algo = Algorithm::Kt;  // clustering algorithm
   bool sort = true;
   bool cartesian = false;
   int repetitions = 1;
@@ -201,17 +201,17 @@ int main(int argc, const char* argv[]) {
 
     // --kt, -kt
     if (std::strcmp(argv[i], "--kt") == 0 or std::strcmp(argv[i], "-kt") == 0) {
-      scheme = Scheme::Kt;
+      algo = Algorithm::Kt;
     } else
 
     // --anti-kt, -antikt
     if (std::strcmp(argv[i], "--anti-kt") == 0 or std::strcmp(argv[i], "-antikt") == 0) {
-      scheme = Scheme::AntiKt;
+      algo = Algorithm::AntiKt;
     } else
 
     // --cambridge-aachen, -cam
     if (std::strcmp(argv[i], "--cambridge-aachen") == 0 or std::strcmp(argv[i], "-cam") == 0) {
-      scheme = Scheme::CambridgeAachen;
+      algo = Algorithm::CambridgeAachen;
     } else
 
     // --file, -f
@@ -291,7 +291,7 @@ int main(int argc, const char* argv[]) {
       cudaCheck(cudaMemcpy(particles_d, particles.data(), sizeof(PseudoJet) * particles.size(), cudaMemcpyDefault));
 
       // run the clustering algorithm and measure its running time
-      cluster(particles_d, particles.size(), scheme, r);
+      cluster(particles_d, particles.size(), algo, r);
 
       // copy the clustered jets back to the CPU
       jets.resize(particles.size());

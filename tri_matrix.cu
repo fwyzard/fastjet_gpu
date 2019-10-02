@@ -37,15 +37,15 @@ struct PseudoJetExt {
   double rap;
   bool isJet;
 
-  __host__ __device__ double get_diB(Scheme scheme) const {
-    switch (scheme) {
-      case Scheme::Kt:
+  __host__ __device__ double get_diB(Algorithm algo) const {
+    switch (algo) {
+      case Algorithm::Kt:
         return diB;
 
-      case Scheme::CambridgeAachen:
+      case Algorithm::CambridgeAachen:
         return 1.;
 
-      case Scheme::AntiKt:
+      case Algorithm::AntiKt:
         return inv_diB;
     }
     // never reached
@@ -108,8 +108,8 @@ __device__ double plain_distance(PseudoJetExt &jet1, PseudoJetExt &jet2) {
   return (dphi * dphi + drap * drap);
 }
 
-__device__ double yij_distance(PseudoJetExt &jet1, PseudoJetExt &jet2, Scheme scheme, double one_over_r2) {
-  return min(jet1.get_diB(scheme), jet2.get_diB(scheme)) * plain_distance(jet1, jet2) * one_over_r2;
+__device__ double yij_distance(PseudoJetExt &jet1, PseudoJetExt &jet2, Algorithm algo, double one_over_r2) {
+  return min(jet1.get_diB(algo), jet2.get_diB(algo)) * plain_distance(jet1, jet2) * one_over_r2;
 }
 
 __device__ void tid_to_ij(int &i, int &j, int tid) {
@@ -136,7 +136,7 @@ struct dist_compare {
 };
 
 __global__ void set_distances(
-    PseudoJetExt *jets, Dist *distances, Dist *g_min, int num_particles, Scheme scheme, double one_over_r2) {
+    PseudoJetExt *jets, Dist *distances, Dist *g_min, int num_particles, Algorithm algo, double one_over_r2) {
   unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
   if (tid >= num_particles)
@@ -146,9 +146,9 @@ __global__ void set_distances(
   tid_to_ij(dst.i, dst.j, tid);
 
   if (dst.i == dst.j) {
-    dst.d = jets[dst.i].get_diB(scheme);
+    dst.d = jets[dst.i].get_diB(algo);
   } else {
-    dst.d = yij_distance(jets[dst.i], jets[dst.j], scheme, one_over_r2);
+    dst.d = yij_distance(jets[dst.i], jets[dst.j], algo, one_over_r2);
   }
 
   distances[tid] = dst;
@@ -164,7 +164,7 @@ __global__ void reduction_min(PseudoJetExt *jets,
                               Dist *g_min,
                               int const distances_array_size,
                               int const num_particles,
-                              Scheme scheme,
+                              Algorithm algo,
                               double one_over_r2) {
   // Specialize BlockReduce type for our thread block
   typedef BlockReduce<Dist, 1024> BlockReduceT;
@@ -180,9 +180,9 @@ __global__ void reduction_min(PseudoJetExt *jets,
     if (tid >= distances_array_size || dst.j >= num_particles || dst.i >= num_particles) {
       dst.d = MAX_DOUBLE;
     } else if (dst.i == dst.j) {
-      dst.d = jets[dst.i].get_diB(scheme);
+      dst.d = jets[dst.i].get_diB(algo);
     } else {
-      dst.d = yij_distance(jets[dst.i], jets[dst.j], scheme, one_over_r2);
+      dst.d = yij_distance(jets[dst.i], jets[dst.j], algo, one_over_r2);
     }
 
     distances[tid] = dst;
@@ -283,7 +283,7 @@ __global__ void output(const PseudoJetExt *jets, PseudoJet *particles, int size)
   }
 }
 
-void cluster(PseudoJet *particles, int size, Scheme scheme, double r) {
+void cluster(PseudoJet *particles, int size, Algorithm algo, double r) {
 #pragma regoin CudaMalloc
   PseudoJetExt *d_jets;
   cudaCheck(cudaMalloc(&d_jets, size * sizeof(PseudoJetExt)));
@@ -310,7 +310,7 @@ void cluster(PseudoJet *particles, int size, Scheme scheme, double r) {
   // Compute distances
   num_threads = (size * (size + 1) / 2);
   num_blocks = (num_threads / 1024) + 1;
-  set_distances<<<num_blocks, 1024>>>(d_jets, d_distances, d_min, num_threads, scheme, one_over_r2);
+  set_distances<<<num_blocks, 1024>>>(d_jets, d_distances, d_min, num_threads, algo, one_over_r2);
 
   // Loop n times reduce + recombine
   for (int n = size; n > 0; n--) {
@@ -319,7 +319,7 @@ void cluster(PseudoJet *particles, int size, Scheme scheme, double r) {
 
     // Find the minimum in each block for the distances array
     reduction_min<<<num_blocks, 1024, 1024 * sizeof(Dist)>>>(
-        d_jets, d_distances, d_out, d_min, num_threads, n, scheme, one_over_r2);
+        d_jets, d_distances, d_out, d_min, num_threads, n, algo, one_over_r2);
 
     // // Find the minimum of all blocks
     int b = upper_power_of_two(num_blocks - 1) + 1;
