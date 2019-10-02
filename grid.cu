@@ -56,9 +56,9 @@ struct Grid {
         max_eta(max_eta),
         min_phi(min_phi),
         max_phi(min_phi),
-        r(r),
-        max_i((GridIndexType)(((max_eta - min_eta) / r) + 1)),
-        max_j((GridIndexType)(((max_phi - min_phi) / r) + 1)),
+        r((2 * M_PI) / (int)((2 * M_PI) / r)),            // round up the grid size to have an integer number of cells in phi
+        max_i((GridIndexType)(((max_eta - min_eta) / r))),
+        max_j((GridIndexType)(((max_phi - min_phi) / r))),
         n(n),
         jets(nullptr) {}
 
@@ -316,6 +316,7 @@ __global__ void reduce_recombine(
           local_min = minimum_in_cell(grid, points, local_min, tid, p.box_i - 1, j, one_over_r2);
         }
 
+#if 0
         if (p.box_j == grid.max_j - 2) {
           // Up Up
           local_min = minimum_in_cell(grid, points, local_min, tid, p.box_i, 0, one_over_r2);
@@ -330,6 +331,7 @@ __global__ void reduce_recombine(
             local_min = minimum_in_cell(grid, points, local_min, tid, p.box_i - 1, 0, one_over_r2);
           }
         }
+#endif
 
         // check if (p.box_j - 1) would underflow below 0
         j = p.box_j - 1 >= 0 ? p.box_j - 1 : grid.max_j - 1;
@@ -347,6 +349,7 @@ __global__ void reduce_recombine(
           local_min = minimum_in_cell(grid, points, local_min, tid, p.box_i - 1, j, one_over_r2);
         }
 
+#if 0
         if (p.box_j == 0) {
           // Down Down
           local_min = minimum_in_cell(grid, points, local_min, tid, p.box_i, j - 1, one_over_r2);
@@ -361,6 +364,7 @@ __global__ void reduce_recombine(
             local_min = minimum_in_cell(grid, points, local_min, tid, p.box_i - 1, j - 1, one_over_r2);
           }
         }
+#endif
 
         min_dists[tid] = local_min;
       }
