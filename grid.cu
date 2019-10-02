@@ -316,23 +316,6 @@ __global__ void reduce_recombine(
           local_min = minimum_in_cell(grid, points, local_min, tid, p.box_i - 1, j, one_over_r2);
         }
 
-#if 0
-        if (p.box_j == grid.max_j - 2) {
-          // Up Up
-          local_min = minimum_in_cell(grid, points, local_min, tid, p.box_i, 0, one_over_r2);
-
-          // Up Up Right
-          if (right) {
-            local_min = minimum_in_cell(grid, points, local_min, tid, p.box_i + 1, 0, one_over_r2);
-          }
-
-          // Up Up Left
-          if (left) {
-            local_min = minimum_in_cell(grid, points, local_min, tid, p.box_i - 1, 0, one_over_r2);
-          }
-        }
-#endif
-
         // check if (p.box_j - 1) would underflow below 0
         j = p.box_j - 1 >= 0 ? p.box_j - 1 : grid.max_j - 1;
 
@@ -348,23 +331,6 @@ __global__ void reduce_recombine(
         if (left) {
           local_min = minimum_in_cell(grid, points, local_min, tid, p.box_i - 1, j, one_over_r2);
         }
-
-#if 0
-        if (p.box_j == 0) {
-          // Down Down
-          local_min = minimum_in_cell(grid, points, local_min, tid, p.box_i, j - 1, one_over_r2);
-
-          // Down Down Right
-          if (right) {
-            local_min = minimum_in_cell(grid, points, local_min, tid, p.box_i + 1, j - 1, one_over_r2);
-          }
-
-          // Down Down Left
-          if (left) {
-            local_min = minimum_in_cell(grid, points, local_min, tid, p.box_i - 1, j - 1, one_over_r2);
-          }
-        }
-#endif
 
         min_dists[tid] = local_min;
       }
