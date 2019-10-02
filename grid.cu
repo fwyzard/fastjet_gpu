@@ -56,7 +56,7 @@ struct Grid {
         max_rap(max_rap),
         min_phi(min_phi),
         max_phi(min_phi),
-        r((2 * M_PI) / (int)((2 * M_PI) / r)),            // round up the grid size to have an integer number of cells in phi
+        r((2 * M_PI) / (int)((2 * M_PI) / r)),  // round up the grid size to have an integer number of cells in phi
         max_i((GridIndexType)(((max_rap - min_rap) / r))),
         max_j((GridIndexType)(((max_phi - min_phi) / r))),
         n(n),
@@ -369,7 +369,7 @@ __global__ void reduce_recombine(
         min_dists[tid] = local_min;
       }
 
-      sdata[tid] = local_min; 
+      sdata[tid] = local_min;
     }
     __syncthreads();
 
