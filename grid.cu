@@ -6,8 +6,6 @@
 #include "cluster.h"
 #include "cudaCheck.h"
 
-using namespace std;
-
 #pragma region consts
 const double MaxRap = 1e5;
 #pragma endregion
