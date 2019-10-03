@@ -1,6 +1,8 @@
 #include <cmath>
 
 #include <cuda_runtime.h>
+#include <thrust/execution_policy.h>
+#include <thrust/sort.h>
 
 #include "PseudoJet.h"
 #include "cluster.h"
@@ -258,13 +260,21 @@ __device__ ParticleIndexType &jet_in_grid(Grid const &grid, ParticleIndexType je
 #pragma endregion
 
 #pragma region kernels
-__global__ void set_points(Grid grid, PseudoJetExt *particles, const ParticleIndexType n, Algorithm algo) {
+__global__ void set_jets_coordiinates(Grid grid, PseudoJetExt *particles, const ParticleIndexType n, Algorithm algo) {
   int start = threadIdx.x + blockIdx.x * blockDim.x;
   int stride = gridDim.x * blockDim.x;
 
   for (int tid = start; tid < n; tid += stride) {
     _set_jet(grid, particles[tid], algo);
     //printf("particle %3d has (rap,phi,pT) = (%f,%f,%f) and cell (i,j) = (%d,%d)\n", tid, p.rap, p.phi, sqrt(p.diB), p.i, p.j);
+  }
+}
+
+__global__ void set_jets_to_grid(Grid grid, PseudoJetExt *particles, const ParticleIndexType n, Algorithm algo) {
+  int start = threadIdx.x + blockIdx.x * blockDim.x;
+  int stride = gridDim.x * blockDim.x;
+
+  for (int tid = start; tid < n; tid += stride) {
     add_to_grid(grid, tid, particles[tid]);
   }
 }
@@ -456,10 +466,21 @@ void cluster(PseudoJet *particles, int size, Algorithm algo, double r) {
   // TODO: move to helper function
   int blockSize;
   int minGridSize;
-  cudaCheck(cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, set_points, 0, 0));
+
+  // compute the jets cilindrical coordinates and grid indices
+  cudaCheck(cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, set_jets_coordiinates, 0, 0));
   int gridSize = std::min((size + blockSize - 1) / blockSize, minGridSize);
-  // set jets into points
-  set_points<<<gridSize, blockSize>>>(grid, pseudojets, size, algo);
+  set_jets_coordiinates<<<gridSize, blockSize>>>(grid, pseudojets, size, algo);
+
+  // sort the inputs according to their grid coordinates and "beam" clustering distance
+  thrust::sort(thrust::device, pseudojets, pseudojets + size, [] __device__(auto const &a, auto const &b) {
+    return (a.i < b.i) or (a.i == b.i and a.j < b.j) or (a.i == b.i and a.j == b.j and a.diB < b.diB);
+  });
+
+  // organise the jets in the grid
+  cudaCheck(cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, set_jets_to_grid, 0, 0));
+  gridSize = std::min((size + blockSize - 1) / blockSize, minGridSize);
+  set_jets_to_grid<<<gridSize, blockSize>>>(grid, pseudojets, size, algo);
   cudaCheck(cudaDeviceSynchronize());
 
   {
