@@ -1,4 +1,5 @@
 #include <cmath>
+#include <limits>
 
 #include <cuda_runtime.h>
 #include <thrust/execution_policy.h>
@@ -197,12 +198,9 @@ __device__ Dist minimum_in_cell(Grid const &grid,
 
   Dist temp;
   while (num >= 0) {
-    if (tid != num) {
-      temp = yij_distance(pseudojets, tid, num, one_over_r2);
-
-      if (temp.distance < min.distance)
-        min = temp;
-    }
+    temp = yij_distance(pseudojets, tid, num, one_over_r2);
+    if (temp.distance < min.distance)
+      min = temp;
 
     k++;
     num = grid.jets[index * grid.n + k];
@@ -284,22 +282,20 @@ __global__ void reduce_recombine(
   extern __shared__ Dist sdata[];
 
   const double one_over_r2 = 1. / (r * r);
+  const Dist none { std::numeric_limits<double>::infinity(), -1, -1 };
 
   for (int tid = threadIdx.x; tid < n; tid += blockDim.x) {
-    min_dists[tid].i = -3;
+    min_dists[tid].i = -1;
     min_dists[tid].j = -1;
   }
-  Dist min;
-  min.i = -4;
-  min.j = -4;
+  Dist min = none;
   while (n > 0) {
     for (int tid = threadIdx.x; tid < n; tid += blockDim.x) {
       auto p = pseudojets[tid];
       Dist local_min = min_dists[tid];
-      if (local_min.i == -3 or local_min.j == min.i or local_min.j == min.j or local_min.i == min.i or
+      if (local_min.i == -1 or local_min.j == min.i or local_min.j == min.j or local_min.i == min.i or
           local_min.i == min.j or local_min.i >= n or local_min.j >= n) {
-        local_min = yij_distance(pseudojets, tid, tid, one_over_r2);
-        local_min = minimum_in_cell(grid, pseudojets, local_min, tid, p.i, p.j, one_over_r2);
+        local_min = minimum_in_cell(grid, pseudojets, none, tid, p.i, p.j, one_over_r2);
 
         bool right = p.i + 1 < grid.max_i;
         bool left = p.i > 0;
