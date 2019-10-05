@@ -45,11 +45,11 @@ struct Dist {
 };
 
 struct Grid {
+  const double r;
   const double min_rap;
   const double max_rap;
   const double min_phi;
   const double max_phi;
-  const double r;
   const GridIndexType max_i;
   const GridIndexType max_j;
   const ParticleIndexType n;
@@ -58,16 +58,17 @@ struct Grid {
 
   // TODO use a smaller grid size (esimate from distributions in data/mc)
   // TODO usa a SoA
-  __host__ Grid(double min_rap, double max_rap, double min_phi, double max_phi, double r, ParticleIndexType n)
-      : min_rap(min_rap),
-        max_rap(max_rap),
-        min_phi(min_phi),
-        max_phi(min_phi),
-        r((2 * M_PI) / (int)((2 * M_PI) / r)),  // round up the grid size to have an integer number of cells in phi
+  __host__ Grid(double min_rap_, double max_rap_, double min_phi_, double max_phi_, double r_, ParticleIndexType n_)
+      : r((2 * M_PI) / (int)((2 * M_PI) / r_)),  // round up the grid size to have an integer number of cells in phi
+        min_rap(min_rap_),
+        max_rap(max_rap_),
+        min_phi(min_phi_),
+        max_phi(max_phi_),
         max_i((GridIndexType)(((max_rap - min_rap) / r))),
         max_j((GridIndexType)(((max_phi - min_phi) / r))),
-        n(n),
-        jets(nullptr) {}
+        n(n_),
+        jets(nullptr)
+  {}
 
   __host__ __device__ constexpr inline GridIndexType i(double rap) const {
     return (GridIndexType)((rap - min_rap) / r);
@@ -460,12 +461,11 @@ void cluster(PseudoJet *particles, int size, Algorithm algo, double r) {
   cudaCheck(cudaGetLastError());
 
   // TODO: move to helper function
-  int blockSize;
-  int minGridSize;
+  int blockSize, minGridSize, gridSize;
 
   // compute the jets cilindrical coordinates and grid indices
   cudaCheck(cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, set_jets_coordiinates, 0, 0));
-  int gridSize = std::min((size + blockSize - 1) / blockSize, minGridSize);
+  gridSize = std::min((size + blockSize - 1) / blockSize, minGridSize);
   set_jets_coordiinates<<<gridSize, blockSize>>>(grid, pseudojets, size, algo);
 
   // sort the inputs according to their grid coordinates and "beam" clustering distance
