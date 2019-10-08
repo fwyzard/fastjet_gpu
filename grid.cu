@@ -458,7 +458,6 @@ void cluster(PseudoJet *particles, int size, Algorithm algo, double r) {
 #pragma region kernel_launches
   LaunchParameters l;
 
-  cudaCheck(cudaDeviceSynchronize());
   // copy the particles from the input buffer to the pseudojet structures
   l = estimateMinimalGrid(init, size);
   init<<<l.gridSize, l.blockSize>>>(particles, pseudojets, size);
@@ -467,6 +466,7 @@ void cluster(PseudoJet *particles, int size, Algorithm algo, double r) {
   // compute the jets cilindrical coordinates and grid indices
   l = estimateMinimalGrid(set_jets_coordiinates, size);
   set_jets_coordiinates<<<l.gridSize, l.blockSize>>>(grid, pseudojets, size, algo);
+  cudaCheck(cudaGetLastError());
 
   // sort the inputs according to their grid coordinates and "beam" clustering distance
   thrust::sort(thrust::device, pseudojets, pseudojets + size, [] __device__(auto const &a, auto const &b) {
@@ -476,19 +476,18 @@ void cluster(PseudoJet *particles, int size, Algorithm algo, double r) {
   // organise the jets in the grid
   l = estimateMinimalGrid(set_jets_to_grid, size);
   set_jets_to_grid<<<l.gridSize, l.blockSize>>>(grid, pseudojets, size, algo);
-  cudaCheck(cudaDeviceSynchronize());
+  cudaCheck(cudaGetLastError());
 
   l = estimateSingleBlock(reduce_recombine, size);
   int sharedMemory = sizeof(Dist) * size;
 
   reduce_recombine<<<l.gridSize, l.blockSize, sharedMemory>>>(grid, pseudojets, d_min_dists_ptr, size, algo, r);
   cudaCheck(cudaGetLastError());
-  cudaCheck(cudaDeviceSynchronize());
 
   // copy the clustered jets back to the input buffer
   l = estimateMinimalGrid(output, size);
   output<<<l.gridSize, l.blockSize>>>(pseudojets, particles, size);
-  cudaCheck(cudaDeviceSynchronize());
+  cudaCheck(cudaGetLastError());
 #pragma endregion
 
   cudaCheck(cudaFree(pseudojets));
