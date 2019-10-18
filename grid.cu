@@ -478,121 +478,62 @@ __global__ void reduce_recombine(
       break;
 
     // update the local minima
-    for (int tid = start; tid < sizeof(affected)/sizeof(Cell); tid += stride) {
-      GridIndexType i = affected[tid].i;
-      GridIndexType j = affected[tid].j;
+    for (int tid = start; tid < sizeof(affected) / sizeof(Cell) * 9; tid += stride) {
+      int self = tid / 9;   // potentially affected cell (0..2)
+      int cell = tid % 9;   // neighbour id (0..8)
+      GridIndexType i = affected[self].i;
+      GridIndexType j = affected[self].j;
       if (i == -1 or j == -1)
         continue;
-      const GridIndexType j_plus = (j + 1 < grid.max_j) ? j + 1 : 0;
-      const GridIndexType j_minus = (j - 1 >= 0) ? j - 1 : grid.max_j - 1;
       const int index = grid.index(i, j);
-      const int indices[9] = {
-        grid.index(i-1, j_minus),
-        grid.index(i-1, j),
-        grid.index(i-1, j_plus),
-        grid.index(i,   j_minus),
-        grid.index(i,   j),
-        grid.index(i,   j_plus),
-        grid.index(i+1, j_minus),
-        grid.index(i+1, j),
-        grid.index(i+1, j_plus)
-      };
 
       // check if the cell is empty
-      if (grid.jets[index * grid.n] == -1) {
-        for (int k = 0; k < 9; ++k)
-          grid.neighbours[index * 9 + k] = none;
-        grid.neighbours[indices[3] * 9 + 8-3] = none;
-        grid.neighbours[indices[5] * 9 + 8-5] = none;
-        if (i - 1 >= 0) {
-          grid.neighbours[indices[0] * 9 + 8-0] = none;
-          grid.neighbours[indices[1] * 9 + 8-1] = none;
-          grid.neighbours[indices[2] * 9 + 8-2] = none;
-        }
-        if (i + 1 < grid.max_i) {
-          grid.neighbours[indices[6] * 9 + 8-6] = none;
-          grid.neighbours[indices[7] * 9 + 8-7] = none;
-          grid.neighbours[indices[8] * 9 + 8-8] = none;
-        }
+      bool empty = (grid.jets[index * grid.n] == -1);
+
+      // evaluate the neighbouring cells
+      const int delta_i = cell / 3 - 1;
+      const int delta_j = cell % 3 - 1;
+      const GridIndexType other_i = i + delta_i;
+      const GridIndexType other_j = (j + delta_j + grid.max_j) % grid.max_j;
+      const bool central = (cell == 4);
+      const bool outside = other_i < 0 or other_i >= grid.max_i;
+
+      if (central) {
+        grid.neighbours[index * 9 + cell] = empty ? none : minimum_pair_in_cell(grid, pseudojets, i, j, one_over_r2);
+      } else if (outside) {
+        grid.neighbours[index * 9 + cell] = none;
       } else {
-        // FIXME use 9 threads ?
-        GridIndexType j_plus = (j + 1 < grid.max_j) ? j + 1 : 0;
-        GridIndexType j_minus = (j - 1 >= 0) ? j - 1 : grid.max_j - 1;
-        auto tmp = none;
-        tmp = minimum_pair_in_cell(grid, pseudojets, i, j, one_over_r2);
-        grid.neighbours[index * 9 + 4] = tmp;
-        tmp = minimum_pair_in_cells(grid, pseudojets, i, j, i, j_minus, one_over_r2);
-        grid.neighbours[index * 9 + 3] = tmp;
-        grid.neighbours[indices[3] * 9 + 8-3] = tmp;
-        tmp = minimum_pair_in_cells(grid, pseudojets, i, j, i, j_plus, one_over_r2);
-        grid.neighbours[index * 9 + 5] = tmp;
-        grid.neighbours[indices[5] * 9 + 8-5] = tmp;
-        if (i - 1 >= 0) {
-          tmp = minimum_pair_in_cells(grid, pseudojets, i, j, i-1, j_minus, one_over_r2);
-          grid.neighbours[index * 9 + 0] = tmp;
-          grid.neighbours[indices[0] * 9 + 8-0] = tmp;
-          tmp = minimum_pair_in_cells(grid, pseudojets, i, j, i-1, j, one_over_r2);
-          grid.neighbours[index * 9 + 1] = tmp;
-          grid.neighbours[indices[1] * 9 + 8-1] = tmp;
-          tmp = minimum_pair_in_cells(grid, pseudojets, i, j, i-1, j_plus, one_over_r2);
-          grid.neighbours[index * 9 + 2] = tmp;
-          grid.neighbours[indices[2] * 9 + 8-2] = tmp;
-        } else {
-          grid.neighbours[index * 9 + 0] = none;
-          grid.neighbours[index * 9 + 1] = none;
-          grid.neighbours[index * 9 + 2] = none;
-        }
-        if (i + 1 < grid.max_i) {
-          tmp = minimum_pair_in_cells(grid, pseudojets, i, j, i+1, j_minus, one_over_r2);
-          grid.neighbours[index * 9 + 6] = tmp;
-          grid.neighbours[indices[6] * 9 + 8-6] = tmp;
-          tmp = minimum_pair_in_cells(grid, pseudojets, i, j, i+1, j, one_over_r2);
-          grid.neighbours[index * 9 + 7] = tmp;
-          grid.neighbours[indices[7] * 9 + 8-7] = tmp;
-          tmp = minimum_pair_in_cells(grid, pseudojets, i, j, i+1, j_plus, one_over_r2);
-          grid.neighbours[index * 9 + 8] = tmp;
-          grid.neighbours[indices[8] * 9 + 8-8] = tmp;
-        } else {
-          grid.neighbours[index * 9 + 6] = none;
-          grid.neighbours[index * 9 + 7] = none;
-          grid.neighbours[index * 9 + 8] = none;
-        }
+        auto tmp = empty ? none : minimum_pair_in_cells(grid, pseudojets, i, j, other_i, other_j, one_over_r2);
+        grid.neighbours[index * 9 + cell] = tmp;
+        grid.neighbours[grid.index(other_i, other_j) * 9 + 8 - cell] = tmp;
       }
     }
 
     __syncthreads();
 
-    for (int tid = start; tid < sizeof(affected)/sizeof(Cell); tid += stride) {
-      GridIndexType i = affected[tid].i;
-      GridIndexType j = affected[tid].j;
+    for (int tid = start; tid < sizeof(affected) / sizeof(Cell) * 9; tid += stride) {
+      int self = tid / 9;   // potentially affected cell (0..2)
+      int cell = tid % 9;   // neighbour id (0..8)
+      GridIndexType i = affected[self].i;
+      GridIndexType j = affected[self].j;
       if (i == -1 or j == -1)
         continue;
 
-      GridIndexType j_plus = (j + 1 < grid.max_j) ? j + 1 : 0;
-      GridIndexType j_minus = (j - 1 >= 0) ? j - 1 : grid.max_j - 1;
-      int index = grid.index(i, j);
-      int indices[9] = {
-        grid.index(i-1, j_minus),
-        grid.index(i-1, j),
-        grid.index(i-1, j_plus),
-        grid.index(i,   j_minus),
-        grid.index(i,   j),
-        grid.index(i,   j_plus),
-        grid.index(i+1, j_minus),
-        grid.index(i+1, j),
-        grid.index(i+1, j_plus)
-      };
-
       // update the minimum in neighbouring cells
-      for (int c = 0; c < 9; ++c) {
-        int index = indices[c];
-        auto min = none;
-        for (int k = 0; k < 9; ++k) {
-          auto tmp = grid.neighbours[index * 9 + k];
-          if (tmp.distance < min.distance) min = tmp;
-        }
-        grid.minimum[index] = min;
+      const int delta_i = cell / 3 - 1;
+      const int delta_j = cell % 3 - 1;
+      const GridIndexType other_i = i + delta_i;
+      const GridIndexType other_j = (j + delta_j + grid.max_j) % grid.max_j;
+      const bool outside = other_i < 0 or other_i >= grid.max_i;
+      if (outside)
+        continue;
+      const int index = grid.index(other_i, other_j);
+      auto min = none;
+      for (int k = 0; k < 9; ++k) {
+        auto tmp = grid.neighbours[index * 9 + k];
+        if (tmp.distance < min.distance) min = tmp;
       }
+      grid.minimum[index] = min;
     }
     __syncthreads();
   }
