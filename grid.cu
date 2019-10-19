@@ -400,8 +400,11 @@ __global__ void compute_initial_distances(Grid grid, PseudoJetExt *pseudojets, c
   }
 }
 
+constexpr const int n_neighbours = 9;                            // self, plus 8 neighbours
+constexpr const int n_affected = 3;                              // 3 possibly affected cells
+constexpr const int active_threads = n_neighbours * n_affected;  // 1 cell + 8 neighbours, times 3 possibly affected cells
 
-// reduce_recombine(...) must be called with at least 27 threads
+// reduce_recombine(...) must be called with at least active_threads (27) threads
 __global__ void reduce_recombine(
     Grid grid, PseudoJetExt *pseudojets, ParticleIndexType n, Algorithm algo, const float r) {
   extern __shared__ Dist minima[];
@@ -434,7 +437,7 @@ __global__ void reduce_recombine(
 
     // promote or recombine the minimum pseudojet(s)
     Dist min = minima[0];
-    __shared__ Cell affected[3];
+    __shared__ Cell affected[n_affected];
 
     if (threadIdx.x == 0) {
       if (min.i == min.j) {
@@ -482,9 +485,9 @@ __global__ void reduce_recombine(
       break;
 
     int tid = start;
-    if (tid < 27) {
-      int self = tid / 9;   // potentially affected cell (0..2)
-      int cell = tid % 9;   // neighbour id (0..8)
+    if (tid < active_threads) {
+      int self = tid / n_neighbours;   // potentially affected cell (0..2)
+      int cell = tid % n_neighbours;   // neighbour id (0..8)
       GridIndexType i = affected[self].i;
       GridIndexType j = affected[self].j;
 
@@ -507,13 +510,13 @@ __global__ void reduce_recombine(
 
         // update the local minima
         if (central) {
-          grid.neighbours[index * 9 + cell] = empty ? none : minimum_pair_in_cell(grid, pseudojets, i, j, one_over_r2);
+          grid.neighbours[index * n_neighbours + cell] = empty ? none : minimum_pair_in_cell(grid, pseudojets, i, j, one_over_r2);
         } else if (outside) {
-          grid.neighbours[index * 9 + cell] = none;
+          grid.neighbours[index * n_neighbours + cell] = none;
         } else {
           auto tmp = empty ? none : minimum_pair_in_cells(grid, pseudojets, i, j, other_i, other_j, one_over_r2);
-          grid.neighbours[index * 9 + cell] = tmp;
-          grid.neighbours[grid.index(other_i, other_j) * 9 + 8 - cell] = tmp;
+          grid.neighbours[index * n_neighbours + cell] = tmp;
+          grid.neighbours[grid.index(other_i, other_j) * n_neighbours + (n_neighbours - 1) - cell] = tmp;
         }
 
         // synchronise the active threads
@@ -523,8 +526,8 @@ __global__ void reduce_recombine(
         if (not outside) {
           const int other = grid.index(other_i, other_j);
           auto min = none;
-          for (int k = 0; k < 9; ++k) {
-            auto tmp = grid.neighbours[other * 9 + k];
+          for (int k = 0; k < n_neighbours; ++k) {
+            auto tmp = grid.neighbours[other * n_neighbours + k];
             if (tmp.distance < min.distance) min = tmp;
           }
           grid.minimum[other] = min;
