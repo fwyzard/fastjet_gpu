@@ -2,8 +2,10 @@
 #include <limits>
 
 #include <cuda_runtime.h>
+#include <cooperative_groups.h>
 #include <thrust/execution_policy.h>
 #include <thrust/sort.h>
+namespace cg = cooperative_groups;
 
 #include "PseudoJet.h"
 #include "cluster.h"
@@ -398,6 +400,8 @@ __global__ void compute_initial_distances(Grid grid, PseudoJetExt *pseudojets, c
   }
 }
 
+
+// reduce_recombine(...) must be called with at least 27 threads
 __global__ void reduce_recombine(
     Grid grid, PseudoJetExt *pseudojets, ParticleIndexType n, Algorithm algo, const float r) {
   extern __shared__ Dist minima[];
@@ -464,7 +468,7 @@ __global__ void reduce_recombine(
         _set_jet(grid, pseudojet, algo);
         add_to_grid(grid, min.i, pseudojet);
         pseudojets[min.i] = pseudojet;
-        if ((pseudojet.i != ith.i or pseudojet.j != ith.j) and 
+        if ((pseudojet.i != ith.i or pseudojet.j != ith.j) and
             (pseudojet.i != jth.i or pseudojet.j != jth.j)) {
           affected[2] = { pseudojet.i, pseudojet.j };
         } else {
@@ -477,64 +481,57 @@ __global__ void reduce_recombine(
     if (--n == 0)
       break;
 
-    // update the local minima
-    for (int tid = start; tid < sizeof(affected) / sizeof(Cell) * 9; tid += stride) {
+    int tid = start;
+    if (tid < 27) {
       int self = tid / 9;   // potentially affected cell (0..2)
       int cell = tid % 9;   // neighbour id (0..8)
       GridIndexType i = affected[self].i;
       GridIndexType j = affected[self].j;
-      if (i == -1 or j == -1)
-        continue;
-      const int index = grid.index(i, j);
 
-      // check if the cell is empty
-      bool empty = (grid.jets[index * grid.n] == -1);
+      // consider only the affected cells
+      if (i >= 0 and j >= 0) {
 
-      // evaluate the neighbouring cells
-      const int delta_i = cell / 3 - 1;
-      const int delta_j = cell % 3 - 1;
-      const GridIndexType other_i = i + delta_i;
-      const GridIndexType other_j = (j + delta_j + grid.max_j) % grid.max_j;
-      const bool central = (cell == 4);
-      const bool outside = other_i < 0 or other_i >= grid.max_i;
+        auto g = cg::coalesced_threads();
+        const int index = grid.index(i, j);
 
-      if (central) {
-        grid.neighbours[index * 9 + cell] = empty ? none : minimum_pair_in_cell(grid, pseudojets, i, j, one_over_r2);
-      } else if (outside) {
-        grid.neighbours[index * 9 + cell] = none;
-      } else {
-        auto tmp = empty ? none : minimum_pair_in_cells(grid, pseudojets, i, j, other_i, other_j, one_over_r2);
-        grid.neighbours[index * 9 + cell] = tmp;
-        grid.neighbours[grid.index(other_i, other_j) * 9 + 8 - cell] = tmp;
+        // check if the cell is empty
+        bool empty = (grid.jets[index * grid.n] == -1);
+
+        // evaluate the neighbouring cells
+        const int delta_i = cell / 3 - 1;
+        const int delta_j = cell % 3 - 1;
+        const GridIndexType other_i = i + delta_i;
+        const GridIndexType other_j = (j + delta_j + grid.max_j) % grid.max_j;
+        const bool central = (cell == 4);
+        const bool outside = other_i < 0 or other_i >= grid.max_i;
+
+        // update the local minima
+        if (central) {
+          grid.neighbours[index * 9 + cell] = empty ? none : minimum_pair_in_cell(grid, pseudojets, i, j, one_over_r2);
+        } else if (outside) {
+          grid.neighbours[index * 9 + cell] = none;
+        } else {
+          auto tmp = empty ? none : minimum_pair_in_cells(grid, pseudojets, i, j, other_i, other_j, one_over_r2);
+          grid.neighbours[index * 9 + cell] = tmp;
+          grid.neighbours[grid.index(other_i, other_j) * 9 + 8 - cell] = tmp;
+        }
+
+        // synchronise the active threads
+        g.sync();
+
+        // update the minimum in neighbouring cells
+        if (not outside) {
+          const int other = grid.index(other_i, other_j);
+          auto min = none;
+          for (int k = 0; k < 9; ++k) {
+            auto tmp = grid.neighbours[other * 9 + k];
+            if (tmp.distance < min.distance) min = tmp;
+          }
+          grid.minimum[other] = min;
+        }
       }
     }
 
-    __syncthreads();
-
-    for (int tid = start; tid < sizeof(affected) / sizeof(Cell) * 9; tid += stride) {
-      int self = tid / 9;   // potentially affected cell (0..2)
-      int cell = tid % 9;   // neighbour id (0..8)
-      GridIndexType i = affected[self].i;
-      GridIndexType j = affected[self].j;
-      if (i == -1 or j == -1)
-        continue;
-
-      // update the minimum in neighbouring cells
-      const int delta_i = cell / 3 - 1;
-      const int delta_j = cell % 3 - 1;
-      const GridIndexType other_i = i + delta_i;
-      const GridIndexType other_j = (j + delta_j + grid.max_j) % grid.max_j;
-      const bool outside = other_i < 0 or other_i >= grid.max_i;
-      if (outside)
-        continue;
-      const int index = grid.index(other_i, other_j);
-      auto min = none;
-      for (int k = 0; k < 9; ++k) {
-        auto tmp = grid.neighbours[index * 9 + k];
-        if (tmp.distance < min.distance) min = tmp;
-      }
-      grid.minimum[index] = min;
-    }
     __syncthreads();
   }
 }
