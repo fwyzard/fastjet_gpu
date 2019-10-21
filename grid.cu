@@ -432,7 +432,8 @@ constexpr const int active_threads = n_neighbours * n_affected;  // 1 cell + 8 n
 // reduce_recombine(...) must be called with at least active_threads (27) threads
 __global__ void reduce_recombine(
     Grid grid, PseudoJetExt *pseudojets, ParticleIndexType n, Algorithm algo, const float r) {
-  extern __shared__ Dist minima[];
+  //extern __shared__ DistSoA * shared_memory;
+  __shared__ DistSoA minima;
 
   int start = threadIdx.x;
   int stride = blockDim.x;
@@ -456,7 +457,7 @@ __global__ void reduce_recombine(
     Dist min = none;
     for (unsigned int s = width; s >= 16; s >>= 1) {
       for (int tid = threadIdx.x; tid < s and tid + s < grid.max_u * grid.max_v; tid += blockDim.x) {
-        if (minima[tid + s].distance < minima[tid].distance) {
+        if (minima[tid + s].distance() < minima[tid].distance()) {
           minima[tid] = minima[tid + s];
         }
       }
@@ -465,8 +466,8 @@ __global__ void reduce_recombine(
     // use a single thread for the last iterations, to avoid bank conflicts and synchronisations
     if (threadIdx.x == 0) {
       for (int tid = 0; tid < 16; ++tid) {
-        if (minima[tid].distance < min.distance) {
-          min = minima[tid];
+        if (minima[tid].distance() < min.distance) {
+          min = minima[tid].eval();
         }
       }
     }
@@ -648,8 +649,9 @@ void cluster(PseudoJet *particles, int size, Algorithm algo, double r) {
 
   // recombine the particles into jets
   l = estimateSingleBlock(reduce_recombine, grid.size());
-  int sharedMemory = sizeof(Dist) * grid.size();
-  reduce_recombine<<<l.gridSize, l.blockSize, sharedMemory>>>(grid, pseudojets, size, algo, r);
+  //int sharedMemory = sizeof(DistSoA);
+  //reduce_recombine<<<l.gridSize, l.blockSize, sharedMemory>>>(grid, pseudojets, size, algo, r);
+  reduce_recombine<<<l.gridSize, l.blockSize>>>(grid, pseudojets, size, algo, r);
   cudaCheck(cudaGetLastError());
 
   // copy the clustered jets back to the input buffer
