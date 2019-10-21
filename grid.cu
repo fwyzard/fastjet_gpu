@@ -415,6 +415,8 @@ __global__ void reduce_recombine(
   const double one_over_r2 = 1. / (r * r);
   const Dist none { std::numeric_limits<double>::infinity(), -1, -1 };
 
+  __shared__ Cell affected[n_affected];
+
   while (true) {
     // copy the minimum distances into shared memory
     for (int index = start; index < grid.max_u * grid.max_v; index += stride) {
@@ -426,7 +428,8 @@ __global__ void reduce_recombine(
     unsigned int width = (1u << 31) >> __clz(grid.max_u * grid.max_v - 1);
 
     // find the global minimum
-    for (unsigned int s = width; s > 0; s >>= 1) {
+    Dist min = none;
+    for (unsigned int s = width; s >= 16; s >>= 1) {
       for (int tid = threadIdx.x; tid < s and tid + s < grid.max_u * grid.max_v; tid += blockDim.x) {
         if (minima[tid + s].distance < minima[tid].distance) {
           minima[tid] = minima[tid + s];
@@ -434,11 +437,17 @@ __global__ void reduce_recombine(
       }
       __syncthreads();
     }
+    // use a single thread for the last iterations, to avoid bank conflicts and synchronisations
+    if (threadIdx.x == 0) {
+      for (int tid = 0; tid < 16; ++tid) {
+        if (minima[tid].distance < min.distance) {
+          min = minima[tid];
+        }
+      }
+    }
+    __syncthreads();
 
     // promote or recombine the minimum pseudojet(s)
-    Dist min = minima[0];
-    __shared__ Cell affected[n_affected];
-
     if (threadIdx.x == 0) {
       if (min.i == min.j) {
         // remove the pseudojet at position min.j from the grid and promote it to jet status
