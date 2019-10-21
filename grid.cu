@@ -42,11 +42,22 @@ struct PseudoJetExt {
   GridIndexType v;
 };
 
-struct Dist {
-  double distance;
-  ParticleIndexType i;
-  ParticleIndexType j;
-};
+declare_SoA_template(DistSoATemplate,
+  // predefined static scalars
+  // int size;
+  // int alignment;
+
+  // columns: one value per element
+  SoA_column(double, distance),
+  SoA_column(ParticleIndexType, i),
+  SoA_column(ParticleIndexType, j)
+);
+
+// reserve space for up to 2048 elements, and align each field to 128 bytes
+using DistSoA = DistSoATemplate<2048, 128>;
+
+// Dist structure corresponsing to a DistSoA standalone element
+using Dist = DistSoA::value_type;
 
 declare_SoA_template(CellSoATemplate,
   // predefined static scalars
