@@ -11,6 +11,7 @@ namespace cg = cooperative_groups;
 #include "cluster.h"
 #include "cudaCheck.h"
 #include "launch.h"
+#include "soa_v4.h"
 
 #pragma region consts
 const double MaxRap = 1e5;
@@ -46,6 +47,19 @@ struct Dist {
   ParticleIndexType i;
   ParticleIndexType j;
 };
+
+declare_SoA_template(CellSoATemplate,
+  // predefined static scalars
+  // int size;
+  // int alignment;
+
+  // columns: one value per element
+  SoA_column(GridIndexType, u),
+  SoA_column(GridIndexType, v)
+);
+
+// reserve space for up to 3 elements, and align each field to 128 bytes
+using CellSoA = CellSoATemplate<3, 128>;
 
 struct Cell {
   GridIndexType u;
@@ -415,7 +429,7 @@ __global__ void reduce_recombine(
   const double one_over_r2 = 1. / (r * r);
   const Dist none { std::numeric_limits<double>::infinity(), -1, -1 };
 
-  __shared__ Cell affected[n_affected];
+  __shared__ CellSoA affected;
 
   while (true) {
     // copy the minimum distances into shared memory
@@ -497,8 +511,8 @@ __global__ void reduce_recombine(
     if (tid < active_threads) {
       int self = tid / n_neighbours;   // potentially affected cell (0..2)
       int cell = tid % n_neighbours;   // neighbour id (0..8)
-      GridIndexType u = affected[self].u;
-      GridIndexType v = affected[self].v;
+      GridIndexType u = affected[self].u();
+      GridIndexType v = affected[self].v();
 
       // consider only the affected cells
       if (u >= 0 and v >= 0) {
