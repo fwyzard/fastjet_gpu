@@ -406,7 +406,7 @@ constexpr const int active_threads = n_neighbours * n_affected;  // 1 cell + 8 n
 
 // reduce_recombine(...) must be called with at least active_threads (27) threads
 __global__ void reduce_recombine(
-    Grid grid, PseudoJetExt *pseudojets, ParticleIndexType n, Algorithm algo, const float r) {
+    Grid grid, PseudoJetExt *pseudojets, ParticleIndexType n, Algorithm algo, const double r) {
   extern __shared__ Dist minima[];
 
   int start = threadIdx.x;
