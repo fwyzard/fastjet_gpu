@@ -2,8 +2,10 @@
 #include <limits>
 
 #include <cuda_runtime.h>
+#include <cooperative_groups.h>
 #include <thrust/execution_policy.h>
 #include <thrust/sort.h>
+namespace cg = cooperative_groups;
 
 #include "PseudoJet.h"
 #include "cluster.h"
@@ -35,8 +37,8 @@ struct PseudoJetExt {
   double rap;
   double phi;
   double diB;
-  GridIndexType i;
-  GridIndexType j;
+  GridIndexType u;
+  GridIndexType v;
 };
 
 struct Dist {
@@ -45,17 +47,24 @@ struct Dist {
   ParticleIndexType j;
 };
 
+struct Cell {
+  GridIndexType u;
+  GridIndexType v;
+};
+
 struct Grid {
   const double r;
   const double min_rap;
   const double max_rap;
   const double min_phi;
   const double max_phi;
-  const GridIndexType max_i;
-  const GridIndexType max_j;
+  const GridIndexType max_u;
+  const GridIndexType max_v;
   const ParticleIndexType n;
 
   ParticleIndexType *jets;
+  Dist *minimum;
+  Dist *neighbours;
 
   // TODO use a smaller grid size (esimate from distributions in data/mc)
   // TODO usa a SoA
@@ -65,31 +74,35 @@ struct Grid {
         max_rap(max_rap_),
         min_phi(min_phi_),
         max_phi(max_phi_),
-        max_i((GridIndexType)(((max_rap - min_rap) / r))),
-        max_j((GridIndexType)(((max_phi - min_phi) / r))),
+        max_u((GridIndexType)(((max_rap - min_rap) / r))),
+        max_v((GridIndexType)(((max_phi - min_phi) / r))),
         n(n_),
-        jets(nullptr)
+        jets(nullptr),
+        minimum(nullptr),
+        neighbours(nullptr)
   {}
 
-  __host__ __device__ constexpr inline GridIndexType i(double rap) const {
+  __host__ __device__ constexpr inline GridIndexType u(double rap) const {
     return (GridIndexType)((rap - min_rap) / r);
   }
 
-  __host__ __device__ constexpr inline GridIndexType j(double phi) const {
+  __host__ __device__ constexpr inline GridIndexType v(double phi) const {
     return (GridIndexType)((phi - min_phi) / r);
   }
 
-  __host__ __device__ constexpr inline double rap_min(GridIndexType i) const { return min_rap + r * i; }
+  __host__ __device__ constexpr inline double rap_min(GridIndexType u) const { return min_rap + r * u; }
 
-  __host__ __device__ constexpr inline double rap_max(GridIndexType i) const { return min_rap + r * (i + 1); }
+  __host__ __device__ constexpr inline double rap_max(GridIndexType u) const { return min_rap + r * (u + 1); }
 
-  __host__ __device__ constexpr inline double phi_min(GridIndexType j) const { return min_phi + r * j; }
+  __host__ __device__ constexpr inline double phi_min(GridIndexType v) const { return min_phi + r * v; }
 
-  __host__ __device__ constexpr inline double phi_max(GridIndexType j) const { return min_phi + r * (j + 1); }
+  __host__ __device__ constexpr inline double phi_max(GridIndexType v) const { return min_phi + r * (v + 1); }
 
-  __host__ __device__ constexpr inline int index(GridIndexType i, GridIndexType j) const { return (int)max_j * i + j; }
+  __host__ __device__ constexpr inline int size() const { return (int) max_u * max_v; }
 
-  __host__ __device__ constexpr inline int offset(GridIndexType i, GridIndexType j) const { return index(i, j) * n; }
+  __host__ __device__ constexpr inline int index(GridIndexType u, GridIndexType v) const { return (int)max_v * u + v; }
+
+  __host__ __device__ constexpr inline int offset(GridIndexType u, GridIndexType v) const { return index(u, v) * n; }
 };
 #pragma endregion
 
@@ -153,8 +166,8 @@ __host__ __device__ void _set_jet(Grid const &grid, PseudoJetExt &jet, Algorithm
   }
 
   // set the grid coordinates
-  jet.i = grid.i(jet.rap);
-  jet.j = grid.j(jet.phi);
+  jet.u = grid.u(jet.rap);
+  jet.v = grid.v(jet.phi);
 }
 
 __device__ double plain_distance(const PseudoJetExt &p1, const PseudoJetExt &p2) {
@@ -187,6 +200,61 @@ __device__ Dist yij_distance(const PseudoJetExt *pseudojets,
   return d;
 }
 
+__device__ Dist minimum_pair_in_cell(Grid const &grid,
+                                const PseudoJetExt *pseudojets,
+                                const GridIndexType u,        // cell coordinates
+                                const GridIndexType v,
+                                double one_over_r2) {
+  int index = grid.index(u, v);
+  Dist min{ std::numeric_limits<double>::infinity(), -1, -1 };
+
+  int k = 0;
+  GridIndexType first = grid.jets[index * grid.n + k];
+  while (first >= 0) {
+    for (int l = 0; l <= k; ++l) {
+      GridIndexType second = grid.jets[index * grid.n + l];
+      auto temp = yij_distance(pseudojets, first, second, one_over_r2);
+      if (temp.distance < min.distance)
+        min = temp;
+    }
+    ++k;
+    first = grid.jets[index * grid.n + k];
+  }
+
+  return min;
+}
+
+__device__ Dist minimum_pair_in_cells(Grid const &grid,
+                                const PseudoJetExt *pseudojets,
+                                const GridIndexType first_u,
+                                const GridIndexType first_v,
+                                const GridIndexType second_u,
+                                const GridIndexType second_v,
+                                double one_over_r2) {
+  int first_index = grid.index(first_u, first_v);
+  int second_index = grid.index(second_u, second_v);
+  Dist min{ std::numeric_limits<double>::infinity(), -1, -1 };
+
+  int k = 0;
+  GridIndexType first = grid.jets[first_index * grid.n + k];
+  while (first >= 0) {
+    int l = 0;
+    GridIndexType second = grid.jets[second_index * grid.n + l];
+    while (second >= 0) {
+      auto temp = yij_distance(pseudojets, first, second, one_over_r2);
+      if (temp.distance < min.distance)
+        min = temp;
+      ++l;
+      second = grid.jets[second_index * grid.n + l];
+    }
+    ++k;
+    first = grid.jets[first_index * grid.n + k];
+  }
+
+  return min;
+}
+
+
 __device__ Dist minimum_in_cell(Grid const &grid,
                                 const PseudoJetExt *pseudojets,
                                 Dist min,
@@ -213,7 +281,7 @@ __device__ Dist minimum_in_cell(Grid const &grid,
 
 __device__ void remove_from_grid(Grid const &grid, ParticleIndexType jet, const PseudoJetExt &p) {
   // Remove an element from a grid cell, and shift all following elements to fill the gap
-  int index = grid.index(p.i, p.j);
+  int index = grid.index(p.u, p.v);
   int first, last;
   for (int k = 0; k < grid.n; ++k) {
     ParticleIndexType num = grid.jets[index * grid.n + k];
@@ -235,7 +303,7 @@ __device__ void remove_from_grid(Grid const &grid, ParticleIndexType jet, const 
 
 __device__ void add_to_grid(Grid const &grid, ParticleIndexType jet, const PseudoJetExt &p) {
   // Add a jet as the last element of a grid cell
-  int index = grid.index(p.i, p.j);
+  int index = grid.index(p.u, p.v);
   for (int k = 0; k < grid.n; ++k) {
     // if the k-th element is -1, replace it with the jet id
     if (atomicCAS(&grid.jets[index * grid.n + k], -1, jet) == -1) {
@@ -243,19 +311,6 @@ __device__ void add_to_grid(Grid const &grid, ParticleIndexType jet, const Pseud
     }
     // FIXME handle the case where the cell is full
   }
-}
-
-__device__ ParticleIndexType &jet_in_grid(Grid const &grid, ParticleIndexType jet, const PseudoJetExt &p) {
-  // Return a reference to the element that identifies a jet in a grid cell
-  int index = grid.index(p.i, p.j);
-  for (int k = 0; k < grid.n; ++k) {
-    ParticleIndexType num = grid.jets[index * grid.n + k];
-    if (num == jet) {
-      return grid.jets[index * grid.n + k];
-    }
-  }
-  // handle the case where the jet is not found
-  return grid.jets[grid.max_i * grid.max_j * grid.n];
 }
 #pragma endregion
 
@@ -266,7 +321,7 @@ __global__ void set_jets_coordiinates(Grid grid, PseudoJetExt *particles, const 
 
   for (int tid = start; tid < n; tid += stride) {
     _set_jet(grid, particles[tid], algo);
-    //printf("particle %3d has (rap,phi,pT) = (%f,%f,%f) and cell (i,j) = (%d,%d)\n", tid, p.rap, p.phi, sqrt(p.diB), p.i, p.j);
+    //printf("particle %3d has (rap,phi,pT) = (%f,%f,%f) and cell (i,j) = (%d,%d)\n", tid, p.rap, p.phi, sqrt(p.diB), p.u, p.j);
   }
 }
 
@@ -279,113 +334,142 @@ __global__ void set_jets_to_grid(Grid grid, PseudoJetExt *particles, const Parti
   }
 }
 
+__global__ void compute_initial_distances(Grid grid, PseudoJetExt *pseudojets, const ParticleIndexType n, double r) {
+  const double one_over_r2 = 1. / (r * r);
+  const Dist none { std::numeric_limits<double>::infinity(), -1, -1 };
+
+  int start = threadIdx.x + blockIdx.x * blockDim.x;
+  int stride = gridDim.x * blockDim.x;
+
+  for (int index = start; index < grid.max_u * grid.max_v; index += stride) {
+    GridIndexType i = index / grid.max_v;
+    GridIndexType j = index % grid.max_v;
+    auto jet = grid.jets[index * grid.n];
+
+    // check if the cell is empty
+    if (jet == -1) {
+      for (int k = 0; k < 9; ++k)
+        grid.neighbours[index * 9 + k] = none;
+      grid.minimum[index] = none;
+    } else {
+      // FIXME use 9 threads ?
+      GridIndexType j_plus = (j + 1 < grid.max_v) ? j + 1 : 0;
+      GridIndexType j_minus = (j - 1 >= 0) ? j - 1 : grid.max_v - 1;
+      auto min = none;
+      auto tmp = none;
+      min = minimum_pair_in_cell(grid, pseudojets, i, j, one_over_r2);
+      grid.neighbours[index * 9 + 4] = min;
+      tmp = minimum_pair_in_cells(grid, pseudojets, i, j, i, j_minus, one_over_r2);
+      grid.neighbours[index * 9 + 3] = tmp;
+      if (tmp.distance < min.distance) min = tmp;
+      tmp = minimum_pair_in_cells(grid, pseudojets, i, j, i, j_plus, one_over_r2);
+      grid.neighbours[index * 9 + 5] = tmp;
+      if (tmp.distance < min.distance) min = tmp;
+      if (i - 1 >= 0) {
+        tmp = minimum_pair_in_cells(grid, pseudojets, i, j, i-1, j_minus, one_over_r2);
+        grid.neighbours[index * 9 + 0] = tmp;
+        if (tmp.distance < min.distance) min = tmp;
+        tmp = minimum_pair_in_cells(grid, pseudojets, i, j, i-1, j, one_over_r2);
+        grid.neighbours[index * 9 + 1] = tmp;
+        if (tmp.distance < min.distance) min = tmp;
+        tmp = minimum_pair_in_cells(grid, pseudojets, i, j, i-1, j_plus, one_over_r2);
+        grid.neighbours[index * 9 + 2] = tmp;
+        if (tmp.distance < min.distance) min = tmp;
+      } else {
+        grid.neighbours[index * 9 + 0] = none;
+        grid.neighbours[index * 9 + 1] = none;
+        grid.neighbours[index * 9 + 2] = none;
+      }
+      if (i + 1 < grid.max_u) {
+        tmp = minimum_pair_in_cells(grid, pseudojets, i, j, i+1, j_minus, one_over_r2);
+        grid.neighbours[index * 9 + 6] = tmp;
+        if (tmp.distance < min.distance) min = tmp;
+        tmp = minimum_pair_in_cells(grid, pseudojets, i, j, i+1, j, one_over_r2);
+        grid.neighbours[index * 9 + 7] = tmp;
+        if (tmp.distance < min.distance) min = tmp;
+        tmp = minimum_pair_in_cells(grid, pseudojets, i, j, i+1, j_plus, one_over_r2);
+        grid.neighbours[index * 9 + 8] = tmp;
+        if (tmp.distance < min.distance) min = tmp;
+      } else {
+        grid.neighbours[index * 9 + 6] = none;
+        grid.neighbours[index * 9 + 7] = none;
+        grid.neighbours[index * 9 + 8] = none;
+      }
+      grid.minimum[index] = min;
+    }
+  }
+}
+
+constexpr const int n_neighbours = 9;                            // self, plus 8 neighbours
+constexpr const int n_affected = 3;                              // 3 possibly affected cells
+constexpr const int active_threads = n_neighbours * n_affected;  // 1 cell + 8 neighbours, times 3 possibly affected cells
+
+// reduce_recombine(...) must be called with at least active_threads (27) threads
 __global__ void reduce_recombine(
-    Grid grid, PseudoJetExt *pseudojets, Dist *min_dists, ParticleIndexType n, Algorithm algo, const float r) {
-  extern __shared__ Dist sdata[];
+    Grid grid, PseudoJetExt *pseudojets, ParticleIndexType n, Algorithm algo, const float r) {
+  extern __shared__ Dist minima[];
+
+  int start = threadIdx.x;
+  int stride = blockDim.x;
 
   const double one_over_r2 = 1. / (r * r);
   const Dist none { std::numeric_limits<double>::infinity(), -1, -1 };
 
-  for (int tid = threadIdx.x; tid < n; tid += blockDim.x) {
-    min_dists[tid].i = -1;
-    min_dists[tid].j = -1;
-  }
-  Dist min = none;
-  while (n > 0) {
-    for (int tid = threadIdx.x; tid < n; tid += blockDim.x) {
-      auto p = pseudojets[tid];
-      Dist local_min = min_dists[tid];
-      if (local_min.i == -1 or local_min.j == min.i or local_min.j == min.j or local_min.i == min.i or
-          local_min.i == min.j or local_min.i >= n or local_min.j >= n) {
-        local_min = minimum_in_cell(grid, pseudojets, none, tid, p.i, p.j, one_over_r2);
+  __shared__ Cell affected[n_affected];
 
-        bool right = p.i + 1 < grid.max_i;
-        bool left = p.i > 0;
-
-        // Right
-        if (right) {
-          local_min = minimum_in_cell(grid, pseudojets, local_min, tid, p.i + 1, p.j, one_over_r2);
-        }
-
-        // Left
-        if (left) {
-          local_min = minimum_in_cell(grid, pseudojets, local_min, tid, p.i - 1, p.j, one_over_r2);
-        }
-
-        // check if (p.j + 1) would overflow grid.max_j
-        GridIndexType j = (p.j + 1 < grid.max_j) ? p.j + 1 : 0;
-
-        // Up
-        local_min = minimum_in_cell(grid, pseudojets, local_min, tid, p.i, j, one_over_r2);
-
-        // Up Right
-        if (right) {
-          local_min = minimum_in_cell(grid, pseudojets, local_min, tid, p.i + 1, j, one_over_r2);
-        }
-
-        // Up Left
-        if (left) {
-          local_min = minimum_in_cell(grid, pseudojets, local_min, tid, p.i - 1, j, one_over_r2);
-        }
-
-        // check if (p.j - 1) would underflow below 0
-        j = p.j - 1 >= 0 ? p.j - 1 : grid.max_j - 1;
-
-        // Down
-        local_min = minimum_in_cell(grid, pseudojets, local_min, tid, p.i, j, one_over_r2);
-
-        // Down Right
-        if (right) {
-          local_min = minimum_in_cell(grid, pseudojets, local_min, tid, p.i + 1, j, one_over_r2);
-        }
-
-        // Down Left
-        if (left) {
-          local_min = minimum_in_cell(grid, pseudojets, local_min, tid, p.i - 1, j, one_over_r2);
-        }
-
-        min_dists[tid] = local_min;
-      }
-
-      sdata[tid] = local_min;
+  while (true) {
+    // copy the minimum distances into shared memory
+    for (int index = start; index < grid.max_u * grid.max_v; index += stride) {
+      minima[index] = grid.minimum[index];
     }
     __syncthreads();
 
-    // find the largest power of 2 smaller than n
-    unsigned int width = (1u << 31) >> __clz(n - 1);
+    // find the largest power of 2 smaller than the grid size
+    unsigned int width = (1u << 31) >> __clz(grid.max_u * grid.max_v - 1);
 
-    for (unsigned int s = width; s > 0; s >>= 1) {
-      for (int tid = threadIdx.x; tid < s and tid < n - s; tid += blockDim.x) {
-        if (sdata[tid + s].distance < sdata[tid].distance) {
-          sdata[tid] = sdata[tid + s];
+    // find the global minimum
+    Dist min = none;
+    for (unsigned int s = width; s >= 16; s >>= 1) {
+      for (int tid = threadIdx.x; tid < s and tid + s < grid.max_u * grid.max_v; tid += blockDim.x) {
+        if (minima[tid + s].distance < minima[tid].distance) {
+          minima[tid] = minima[tid + s];
         }
       }
       __syncthreads();
     }
-
-    min = sdata[0];
+    // use a single thread for the last iterations, to avoid bank conflicts and synchronisations
     if (threadIdx.x == 0) {
-      //printf("will recombine pseudojets %d and %d with distance %f\n", min.i, min.j, min.distance);
+      for (int tid = 0; tid < 16; ++tid) {
+        if (minima[tid].distance < min.distance) {
+          min = minima[tid];
+        }
+      }
+    }
+    __syncthreads();
+
+    // promote or recombine the minimum pseudojet(s)
+    if (threadIdx.x == 0) {
       if (min.i == min.j) {
         // remove the pseudojet at position min.j from the grid and promote it to jet status
+        //printf("will promote pseudojet %d (%d,%d) with distance %f\n", min.j, pseudojets[min.j].u, pseudojets[min.j].v, min.distance);
+        pseudojets[min.j].isJet = true;
         auto jet = pseudojets[min.j];
         remove_from_grid(grid, min.j, jet);
-        jet.isJet = true;
-
-        // move the last pseudojet to position min.j
-        if (min.j != n - 1) {
-          jet_in_grid(grid, n - 1, pseudojets[n - 1]) = min.j;
-          pseudojets[min.j] = pseudojets[n - 1];
-        }
-
-        // move the jet to the end of the list
-        pseudojets[n - 1] = jet;
-
+        affected[0] = { jet.u, jet.v };
+        affected[1] = { -1, -1 };
+        affected[2] = { -1, -1 };
       } else {
+        //printf("will recombine pseudojets %d (%d,%d) and %d (%d,%d) with distance %f\n", min.i, pseudojets[min.i].u, pseudojets[min.i].v, min.j, pseudojets[min.j].u, pseudojets[min.j].v, min.distance);
         auto ith = pseudojets[min.i];
         auto jth = pseudojets[min.j];
         remove_from_grid(grid, min.i, ith);
         remove_from_grid(grid, min.j, jth);
+        affected[0] = { ith.u, ith.v };
+        if (jth.u != ith.u or jth.v != ith.v) {
+          affected[1] = { jth.u, jth.v };
+        } else {
+          affected[1] = { -1, -1 };
+        }
 
         // recombine the two pseudojets
         PseudoJetExt pseudojet;
@@ -396,15 +480,70 @@ __global__ void reduce_recombine(
         _set_jet(grid, pseudojet, algo);
         add_to_grid(grid, min.i, pseudojet);
         pseudojets[min.i] = pseudojet;
-
-        // move the last pseudojet to position min.j
-        if (min.j != n - 1) {
-          jet_in_grid(grid, n - 1, pseudojets[n - 1]) = min.j;
-          pseudojets[min.j] = pseudojets[n - 1];
+        if ((pseudojet.u != ith.u or pseudojet.v != ith.v) and
+            (pseudojet.u != jth.u or pseudojet.v != jth.v)) {
+          affected[2] = { pseudojet.u, pseudojet.v };
+        } else {
+          affected[2] = { -1, -1 };
         }
       }
     }
-    n--;
+    __syncthreads();
+
+    if (--n == 0)
+      break;
+
+    int tid = start;
+    if (tid < active_threads) {
+      int self = tid / n_neighbours;   // potentially affected cell (0..2)
+      int cell = tid % n_neighbours;   // neighbour id (0..8)
+      GridIndexType u = affected[self].u;
+      GridIndexType v = affected[self].v;
+
+      // consider only the affected cells
+      if (u >= 0 and v >= 0) {
+
+        auto g = cg::coalesced_threads();
+        const int index = grid.index(u, v);
+
+        // check if the cell is empty
+        bool empty = (grid.jets[index * grid.n] == -1);
+
+        // evaluate the neighbouring cells
+        const int delta_u = cell / 3 - 1;
+        const int delta_v = cell % 3 - 1;
+        const GridIndexType other_u = u + delta_u;
+        const GridIndexType other_v = (v + delta_v + grid.max_v) % grid.max_v;
+        const bool central = (cell == 4);
+        const bool outside = other_u < 0 or other_u >= grid.max_u;
+
+        // update the local minima
+        if (central) {
+          grid.neighbours[index * n_neighbours + cell] = empty ? none : minimum_pair_in_cell(grid, pseudojets, u, v, one_over_r2);
+        } else if (outside) {
+          grid.neighbours[index * n_neighbours + cell] = none;
+        } else {
+          auto tmp = empty ? none : minimum_pair_in_cells(grid, pseudojets, u, v, other_u, other_v, one_over_r2);
+          grid.neighbours[index * n_neighbours + cell] = tmp;
+          grid.neighbours[grid.index(other_u, other_v) * n_neighbours + (n_neighbours - 1) - cell] = tmp;
+        }
+
+        // synchronise the active threads
+        g.sync();
+
+        // update the minimum in neighbouring cells
+        if (not outside) {
+          const int other = grid.index(other_u, other_v);
+          auto min = none;
+          for (int k = 0; k < n_neighbours; ++k) {
+            auto tmp = grid.neighbours[other * n_neighbours + k];
+            if (tmp.distance < min.distance) min = tmp;
+          }
+          grid.minimum[other] = min;
+        }
+      }
+    }
+
     __syncthreads();
   }
 }
@@ -445,14 +584,13 @@ void cluster(PseudoJet *particles, int size, Algorithm algo, double r) {
   // TODO: make the cell size dynamic, based on the data themselves
   // TODO: try to use __constant__ memory for config
   Grid grid(-10., +10., 0, 2 * M_PI, r, size);
-  cudaCheck(cudaMalloc(&grid.jets, sizeof(ParticleIndexType) * grid.max_i * grid.max_j * grid.n));
-  cudaCheck(cudaMemset(grid.jets, 0xff, sizeof(ParticleIndexType) * grid.max_i * grid.max_j * grid.n));
+  cudaCheck(cudaMalloc(&grid.jets, sizeof(ParticleIndexType) * grid.max_u * grid.max_v * grid.n));
+  cudaCheck(cudaMemset(grid.jets, 0xff, sizeof(ParticleIndexType) * grid.max_u * grid.max_v * grid.n));
+  cudaCheck(cudaMalloc(&grid.minimum, sizeof(Dist) * grid.max_u * grid.max_v));
+  cudaCheck(cudaMalloc(&grid.neighbours, sizeof(Dist) * grid.max_u * grid.max_v * 9));
 
   PseudoJetExt *pseudojets;
   cudaCheck(cudaMalloc(&pseudojets, size * sizeof(PseudoJetExt)));
-
-  Dist *d_min_dists_ptr;
-  cudaCheck(cudaMalloc(&d_min_dists_ptr, sizeof(Dist) * size));
 #pragma endregion
 
 #pragma region kernel_launches
@@ -470,7 +608,7 @@ void cluster(PseudoJet *particles, int size, Algorithm algo, double r) {
 
   // sort the inputs according to their grid coordinates and "beam" clustering distance
   thrust::sort(thrust::device, pseudojets, pseudojets + size, [] __device__(auto const &a, auto const &b) {
-    return (a.i < b.i) or (a.i == b.i and a.j < b.j) or (a.i == b.i and a.j == b.j and a.diB < b.diB);
+    return (a.u < b.u) or (a.u == b.u and a.v < b.v) or (a.u == b.u and a.v == b.v and a.diB < b.diB);
   });
 
   // organise the jets in the grid
@@ -478,10 +616,15 @@ void cluster(PseudoJet *particles, int size, Algorithm algo, double r) {
   set_jets_to_grid<<<l.gridSize, l.blockSize>>>(grid, pseudojets, size, algo);
   cudaCheck(cudaGetLastError());
 
-  l = estimateSingleBlock(reduce_recombine, size);
-  int sharedMemory = sizeof(Dist) * size;
+  // compute the minimum distances in all grid cells
+  l = estimateMinimalGrid(compute_initial_distances, grid.size());
+  compute_initial_distances<<<l.gridSize, l.blockSize>>>(grid, pseudojets, size, r);
+  cudaCheck(cudaGetLastError());
 
-  reduce_recombine<<<l.gridSize, l.blockSize, sharedMemory>>>(grid, pseudojets, d_min_dists_ptr, size, algo, r);
+  // recombine the particles into jets
+  l = estimateSingleBlock(reduce_recombine, grid.size());
+  int sharedMemory = sizeof(Dist) * grid.size();
+  reduce_recombine<<<l.gridSize, l.blockSize, sharedMemory>>>(grid, pseudojets, size, algo, r);
   cudaCheck(cudaGetLastError());
 
   // copy the clustered jets back to the input buffer
@@ -492,5 +635,6 @@ void cluster(PseudoJet *particles, int size, Algorithm algo, double r) {
 
   cudaCheck(cudaFree(pseudojets));
   cudaCheck(cudaFree(grid.jets));
-  cudaCheck(cudaFree(d_min_dists_ptr));
+  cudaCheck(cudaFree(grid.minimum));
+  cudaCheck(cudaFree(grid.neighbours));
 }
